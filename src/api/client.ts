@@ -24,7 +24,14 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const token = useAuthStore.getState().token;
+    const requestUrl = String(error.config?.url || '');
+    const isAuthRequest =
+      requestUrl.includes('/auth/login') ||
+      requestUrl.includes('/auth/register') ||
+      requestUrl.includes('/auth/refresh');
+
+    if (error.response?.status === 401 && token && !isAuthRequest) {
       useAuthStore.getState().logout();
       window.location.href = '/login';
     }

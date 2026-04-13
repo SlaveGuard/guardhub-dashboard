@@ -1,4 +1,3 @@
-import React from 'react';
 import { Outlet } from 'react-router-dom';
 import ThemeToggle from './ThemeToggle';
 import { Activity } from 'lucide-react';

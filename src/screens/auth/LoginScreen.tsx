@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { apiClient } from '../../api/client';
@@ -12,22 +12,32 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
-      // Backend expects {"email": "...", "password": "..."}
       const res = await apiClient.post('/auth/login', { email, password });
-      
-      const token = res.data.access_token;
-      // In the backend we returned access_token. 
-      // We will mock user object for now since login returns access_token.
-      setAuth(token, { email }); 
+
+      const token = res.data.accessToken;
+      const user = res.data.user
+        ? {
+            ...res.data.user,
+            name: res.data.user.displayName ?? res.data.user.email,
+          }
+        : { email, name: email };
+
+      setAuth(token, user);
       
       toast.success('Welcome back to GuardHub');
       navigate('/dashboard');
     } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Login failed. Please try again.');
+      const message = error.response?.data?.message || 'Login failed. Please try again.';
+      if (error.response?.status === 403 && typeof message === 'string' && message.toLowerCase().includes('verify')) {
+        toast.error(message);
+        navigate(`/verify-email?email=${encodeURIComponent(email)}`);
+        return;
+      }
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -69,6 +79,12 @@ export default function LoginScreen() {
                 "Log In"
               )}
             </button>
+
+            <div className="flex justify-end">
+              <Link to="/forgot-password" className="text-sm text-brand-400 hover:text-brand-300 transition-colors">
+                Forgot password?
+              </Link>
+            </div>
           </form>
 
           <p className="mt-6 text-center text-sm text-slate-400">
