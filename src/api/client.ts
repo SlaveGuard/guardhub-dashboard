@@ -1,8 +1,12 @@
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
+import type { InternalAxiosRequestConfig } from 'axios';
 import { useAuthStore } from '../store/authStore';
 
-// Default to local NestJS backend for MVP
 export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1';
+
+type RetriableRequestConfig = InternalAxiosRequestConfig & {
+  _retry?: boolean;
+};
 
 export const apiClient = axios.create({
   baseURL: API_URL,
@@ -11,7 +15,47 @@ export const apiClient = axios.create({
   },
 });
 
-// Inject Bearer token
+let refreshPromise: Promise<string | null> | null = null;
+
+function isAuthRequest(url: string) {
+  return (
+    url.includes('/auth/login') ||
+    url.includes('/auth/register') ||
+    url.includes('/auth/refresh')
+  );
+}
+
+async function refreshAccessToken() {
+  const { refreshToken, setTokens, logout } = useAuthStore.getState();
+  if (!refreshToken) {
+    return null;
+  }
+
+  if (!refreshPromise) {
+    refreshPromise = apiClient
+      .post('/auth/refresh', { refreshToken })
+      .then((response) => {
+        const nextAccessToken = response.data.accessToken as string | undefined;
+        const nextRefreshToken = response.data.refreshToken as string | undefined;
+        if (!nextAccessToken || !nextRefreshToken) {
+          throw new Error('Refresh response is missing tokens');
+        }
+
+        setTokens(nextAccessToken, nextRefreshToken);
+        return nextAccessToken;
+      })
+      .catch((error) => {
+        logout();
+        throw error;
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+
+  return refreshPromise;
+}
+
 apiClient.interceptors.request.use((config) => {
   const token = useAuthStore.getState().token;
   if (token && config.headers) {
@@ -20,21 +64,41 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle 401 Unauthorized
 apiClient.interceptors.response.use(
   (response) => response,
-  (error) => {
-    const token = useAuthStore.getState().token;
+  async (error: AxiosError) => {
     const requestUrl = String(error.config?.url || '');
-    const isAuthRequest =
-      requestUrl.includes('/auth/login') ||
-      requestUrl.includes('/auth/register') ||
-      requestUrl.includes('/auth/refresh');
+    const originalRequest = error.config as RetriableRequestConfig | undefined;
+    const { token, refreshToken, logout } = useAuthStore.getState();
 
-    if (error.response?.status === 401 && token && !isAuthRequest) {
-      useAuthStore.getState().logout();
+    if (
+      error.response?.status === 401 &&
+      token &&
+      refreshToken &&
+      originalRequest &&
+      !originalRequest._retry &&
+      !isAuthRequest(requestUrl)
+    ) {
+      originalRequest._retry = true;
+
+      try {
+        const nextAccessToken = await refreshAccessToken();
+        if (nextAccessToken && originalRequest.headers) {
+          originalRequest.headers.Authorization = `Bearer ${nextAccessToken}`;
+        }
+        return apiClient(originalRequest);
+      } catch (refreshError) {
+        logout();
+        window.location.href = '/login';
+        return Promise.reject(refreshError);
+      }
+    }
+
+    if (error.response?.status === 401 && token && !isAuthRequest(requestUrl)) {
+      logout();
       window.location.href = '/login';
     }
+
     return Promise.reject(error);
-  }
+  },
 );

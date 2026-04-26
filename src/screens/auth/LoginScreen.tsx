@@ -19,6 +19,7 @@ export default function LoginScreen() {
       const res = await apiClient.post('/auth/login', { email, password });
 
       const token = res.data.accessToken;
+      const refreshToken = res.data.refreshToken;
       const user = res.data.user
         ? {
             ...res.data.user,
@@ -26,7 +27,7 @@ export default function LoginScreen() {
           }
         : { email, name: email };
 
-      setAuth(token, user);
+      setAuth(token, refreshToken, user);
       
       toast.success('Welcome back to GuardHub');
       navigate('/dashboard');

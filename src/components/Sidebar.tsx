@@ -22,13 +22,13 @@ export default function Sidebar() {
   ];
 
   return (
-    <div className="w-64 h-screen glass-panel rounded-none border-y-0 border-l-0 flex flex-col">
+    <div className="sticky top-0 h-screen w-64 shrink-0 glass-panel rounded-none border-y-0 border-l-0 flex flex-col overflow-y-auto">
       {/* Brand */}
       <div className="p-6 flex items-center space-x-3">
         <div className="w-10 h-10 rounded-xl bg-brand-500/20 flex items-center justify-center border border-brand-500/50">
           <Activity className="w-6 h-6 text-brand-400" />
         </div>
-        <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-brand-400 to-accent-teal">GuardHub</span>
+        <span className="text-xl font-bold text-slate-900 dark:text-slate-100">GuardHub</span>
       </div>
 
       {/* Navigation */}

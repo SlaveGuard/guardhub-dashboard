@@ -25,9 +25,9 @@ export default function SettingsScreen() {
         data: { password: currentPassword },
       });
     },
-    onSuccess: () => {
+    onSuccess: (response) => {
       logout();
-      toast.success('Account deleted successfully.');
+      toast.success(response.data?.message || 'Account deleted successfully.');
       navigate('/login');
     },
     onError: (error: any) => {
@@ -71,7 +71,7 @@ export default function SettingsScreen() {
           <div>
             <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">Delete Account</h2>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-              This permanently removes your parent account and the family data owned by it.
+              This deactivates your parent account now and hard-deletes retained family data after 90 days.
             </p>
           </div>
         </div>

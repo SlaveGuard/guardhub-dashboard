@@ -3,8 +3,10 @@ import { persist } from 'zustand/middleware';
 
 interface AuthState {
   token: string | null;
-  user: any | null; // Replace 'any' with robust User interface later
-  setAuth: (token: string, user: any) => void;
+  refreshToken: string | null;
+  user: any | null;
+  setAuth: (token: string, refreshToken: string, user: any) => void;
+  setTokens: (token: string, refreshToken: string) => void;
   logout: () => void;
   isAuthenticated: () => boolean;
 }
@@ -13,16 +15,24 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
       token: null,
+      refreshToken: null,
       user: null,
-      
-      setAuth: (token, user) => set({ token, user }),
-      
-      logout: () => set({ token: null, user: null }),
-      
+
+      setAuth: (token, refreshToken, user) => set({ token, refreshToken, user }),
+
+      setTokens: (token, refreshToken) =>
+        set((state) => ({
+          token,
+          refreshToken,
+          user: state.user,
+        })),
+
+      logout: () => set({ token: null, refreshToken: null, user: null }),
+
       isAuthenticated: () => !!get().token,
     }),
     {
-      name: 'guardhub-auth-storage', // saves token securely in localStorage
-    }
-  )
+      name: 'guardhub-auth-storage',
+    },
+  ),
 );

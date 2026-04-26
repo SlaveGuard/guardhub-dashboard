@@ -58,6 +58,109 @@ type SubscriptionLimits = {
 
 const emptyProfileForm = { name: '', age: '', grade: '', timezone: '' };
 const emptyPolicyForm = { key: '', value: '{\n  \n}', strength: 'soft' };
+const fallbackTimezones = [
+  'UTC',
+  'Asia/Colombo',
+  'Asia/Dubai',
+  'Asia/Kolkata',
+  'Asia/Singapore',
+  'Asia/Tokyo',
+  'Australia/Sydney',
+  'Europe/London',
+  'Europe/Berlin',
+  'Europe/Paris',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'America/Toronto',
+] as const;
+const preferredTimezoneLabels: Record<string, string> = {
+  UTC: 'Universal / UTC',
+  'Asia/Colombo': 'Sri Lanka / Colombo',
+  'Asia/Dubai': 'UAE / Dubai',
+  'Asia/Kolkata': 'India / Kolkata',
+  'Asia/Singapore': 'Singapore / Singapore',
+  'Asia/Tokyo': 'Japan / Tokyo',
+  'Australia/Sydney': 'Australia / Sydney',
+  'Europe/London': 'United Kingdom / London',
+  'Europe/Berlin': 'Germany / Berlin',
+  'Europe/Paris': 'France / Paris',
+  'America/New_York': 'USA / New York',
+  'America/Chicago': 'USA / Chicago',
+  'America/Denver': 'USA / Denver',
+  'America/Los_Angeles': 'USA / Los Angeles',
+  'America/Toronto': 'Canada / Toronto',
+};
+const timezoneFormatReferenceDate = new Date('2026-01-15T12:00:00Z');
+function getTimezoneOffsetLabel(timezone: string) {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      timeZoneName: 'longOffset',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const offsetPart = formatter.formatToParts(timezoneFormatReferenceDate).find((part) => part.type === 'timeZoneName')?.value;
+    return offsetPart?.replace('GMT', 'GMT') ?? 'GMT';
+  } catch {
+    return 'GMT';
+  }
+}
+function getTimezoneOffsetMinutes(timezone: string) {
+  try {
+    const localDate = new Date(timezoneFormatReferenceDate.toLocaleString('en-US', { timeZone: timezone }));
+    return Math.round((localDate.getTime() - timezoneFormatReferenceDate.getTime()) / 60000);
+  } catch {
+    return 0;
+  }
+}
+function getTimezoneShortName(timezone: string) {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      timeZoneName: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const shortName = formatter.formatToParts(timezoneFormatReferenceDate).find((part) => part.type === 'timeZoneName')?.value;
+    return shortName && shortName !== timezone ? shortName : null;
+  } catch {
+    return null;
+  }
+}
+function getTimezoneLocationLabel(timezone: string) {
+  const preferred = preferredTimezoneLabels[timezone];
+  if (preferred) return preferred;
+
+  const segments = timezone.split('/');
+  if (segments.length === 1) {
+    return segments[0].replace(/_/g, ' ');
+  }
+
+  const region = segments[0].replace(/_/g, ' ');
+  const location = segments.slice(1).join(' / ').replace(/_/g, ' ');
+  return `${region} / ${location}`;
+}
+const timezoneOptions = (() => {
+  const supportedValuesOf = (Intl as typeof Intl & {
+    supportedValuesOf?: (key: string) => string[];
+  }).supportedValuesOf;
+
+  const zones = supportedValuesOf ? supportedValuesOf('timeZone') : fallbackTimezones;
+  return [...new Set([...fallbackTimezones, ...zones])]
+    .map((value) => {
+      const location = getTimezoneLocationLabel(value);
+      const offset = getTimezoneOffsetLabel(value);
+      const shortName = getTimezoneShortName(value);
+      return {
+        value,
+        offsetMinutes: getTimezoneOffsetMinutes(value),
+        label: `${location} ${offset}${shortName ? ` (${shortName})` : ''}`,
+      };
+    })
+    .sort((left, right) => left.offsetMinutes - right.offsetMinutes || left.label.localeCompare(right.label));
+})();
 
 function isNotFound(error: unknown) {
   return (
@@ -1035,13 +1138,18 @@ export default function DevicesScreen() {
                   className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-dark-800 px-4 py-3 text-slate-900 dark:text-slate-100 outline-none focus:border-brand-500"
                 />
               </div>
-              <input
-                type="text"
+              <select
                 value={profileForm.timezone}
                 onChange={(event) => setProfileForm((current) => ({ ...current, timezone: event.target.value }))}
-                placeholder="Timezone"
                 className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-dark-800 px-4 py-3 text-slate-900 dark:text-slate-100 outline-none focus:border-brand-500"
-              />
+              >
+                <option value="">Select timezone</option>
+                {timezoneOptions.map((timezone) => (
+                  <option key={timezone.value} value={timezone.value}>
+                    {timezone.label}
+                  </option>
+                ))}
+              </select>
               <button
                 onClick={handleCreateProfile}
                 className="btn-primary w-full flex items-center justify-center gap-2"
