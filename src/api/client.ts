@@ -2,7 +2,13 @@ import axios, { AxiosError } from 'axios';
 import type { InternalAxiosRequestConfig } from 'axios';
 import { useAuthStore } from '../store/authStore';
 
-export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1';
+const configuredApiUrl = import.meta.env.VITE_API_URL?.trim();
+
+if (!configuredApiUrl) {
+  throw new Error('Missing VITE_API_URL. Set it in the dashboard .env file.');
+}
+
+export const API_URL = configuredApiUrl;
 
 type RetriableRequestConfig = InternalAxiosRequestConfig & {
   _retry?: boolean;

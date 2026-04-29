@@ -45,6 +45,11 @@ GuardHub Dashboard is a premium, high-performance web portal designed for parent
    VITE_API_URL="http://localhost:3000/api/v1"
    ```
 
+   For your current VM-based test deployment, use:
+   ```env
+   VITE_API_URL="https://145.241.166.201/api/v1"
+   ```
+
 4. **Run the Dashboard**
    ```bash
    # Development mode
