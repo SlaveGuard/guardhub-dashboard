@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { PauseCircle, PlayCircle, Plus, ShieldCheck, Users } from 'lucide-react';
+import { ArrowLeft, PauseCircle, PlayCircle, Plus, ShieldCheck, Users } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { apiClient } from '../../api/client';
 import Breadcrumb from '../../components/Breadcrumb';
@@ -8,7 +8,6 @@ import GuardScreenDeviceView from '../../components/GuardScreenDeviceView';
 import KidsControlCenter from '../../components/KidsControlCenter';
 import LinkedDeviceGroup from '../../components/LinkedDeviceGroup';
 import PairingCodeGenerator from '../../components/PairingCodeGenerator';
-import { PolicyScopePanel } from './DevicesScreen';
 
 type Family = { id: string; name: string } | null;
 type AnyRecord = Record<string, any>;
@@ -141,6 +140,203 @@ function ProfileCard({
         ))}
       </div>
     </button>
+  );
+}
+
+function policyEntryValue(policy: AnyRecord | undefined, key: string) {
+  const entry = policy?.entries?.find((item: AnyRecord) => item.key === key);
+  return entry?.effectiveValue ?? entry?.value;
+}
+
+function PolicyPill({
+  children,
+  active,
+  tone: pillTone,
+  onClick,
+}: {
+  children: string;
+  active?: boolean;
+  tone: 'amber' | 'rose' | 'slate';
+  onClick: () => void;
+}) {
+  const activeClass = {
+    amber: 'border-amber-400 bg-amber-400/10 text-amber-400',
+    rose: 'border-rose-400 bg-rose-400/10 text-rose-400',
+    slate: 'border-white/10 bg-slate-900/40 text-slate-500',
+  }[pillTone];
+  const inactiveClass = 'border-white/10 bg-transparent text-slate-500 hover:text-slate-200';
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${active ? activeClass : inactiveClass}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ToggleRow({
+  title,
+  description,
+  checked,
+  onChange,
+}: {
+  title: string;
+  description: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center justify-between gap-4 border-t border-white/10 py-3">
+      <span>
+        <span className="block text-sm font-medium text-slate-100">{title}</span>
+        <span className="mt-1 block text-xs leading-5 text-slate-400">{description}</span>
+      </span>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="h-5 w-10 shrink-0 accent-accent-teal"
+      />
+    </label>
+  );
+}
+
+function ProfilePolicyCards({ profileId }: { profileId: string }) {
+  const queryClient = useQueryClient();
+  const { data: effectivePolicy } = useQuery<AnyRecord>({
+    queryKey: ['profile', profileId, 'effective-policy'],
+    queryFn: async () => (await apiClient.get(`/profiles/${profileId}/effective-policy`)).data,
+  });
+
+  const explicitBlocking = policyEntryValue(effectivePolicy, 'content.explicit_blocking');
+  const dailyLimit = policyEntryValue(effectivePolicy, 'screen_time.daily_limit');
+  const strictMode = policyEntryValue(effectivePolicy, 'control.strict_mode')?.enabled ?? true;
+  const detectionAlerts = policyEntryValue(effectivePolicy, 'notifications.detection_alerts')?.enabled ?? true;
+  const filterMode = explicitBlocking?.mode ?? (explicitBlocking?.enabled === false ? 'off' : 'block');
+  const [screenHours, setScreenHours] = useState(Number(dailyLimit?.minutes ? Math.round(dailyLimit.minutes / 60) : 6));
+
+  useEffect(() => {
+    if (dailyLimit?.minutes) {
+      setScreenHours(Math.round(Number(dailyLimit.minutes) / 60));
+    }
+  }, [dailyLimit?.minutes]);
+
+  const patchPolicyMutation = useMutation({
+    mutationFn: async (entry: { key: string; value: AnyRecord; strength?: string }) =>
+      (await apiClient.patch(`/profiles/${profileId}/policy`, {
+        entries: [
+          {
+            key: entry.key,
+            value: entry.value,
+            strength: entry.strength ?? 'soft',
+            operation: 'upsert',
+          },
+        ],
+      })).data,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['profile', profileId] });
+      queryClient.invalidateQueries({ queryKey: ['profile', profileId, 'effective-policy'] });
+      toast.success('Profile policy updated.');
+    },
+    onError: (error: AnyRecord) => toast.error(error.response?.data?.message || 'Failed to update profile policy'),
+  });
+
+  const saveRule = (key: string, value: AnyRecord, strength = 'soft') => {
+    patchPolicyMutation.mutate({ key, value, strength });
+  };
+
+  const effectiveRows = [
+    {
+      key: 'content_filter',
+      value: filterMode === 'off' ? 'off' : filterMode,
+      color: filterMode === 'block' ? 'text-rose-400' : filterMode === 'warn' ? 'text-amber-400' : 'text-slate-400',
+    },
+    { key: 'screen_time_limit', value: `${screenHours}h / day`, color: 'text-brand-400' },
+    { key: 'strict_mode', value: strictMode ? 'enabled' : 'disabled', color: strictMode ? 'text-emerald-400' : 'text-slate-400' },
+    { key: 'bedtime', value: '9pm - 7am', color: 'text-accent-teal' },
+    { key: 'app_blocklist', value: 'active', color: 'text-emerald-400' },
+  ];
+
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <section className="glass-panel p-5">
+        <h2 className="mb-4 text-sm font-semibold text-slate-100">Profile Policy</h2>
+
+        <div className="mb-4">
+          <div className="mb-2 text-xs font-medium text-slate-400">Content Filtering Mode</div>
+          <div className="flex flex-wrap gap-2">
+            <PolicyPill
+              tone="amber"
+              active={filterMode === 'warn'}
+              onClick={() => saveRule('content.explicit_blocking', { enabled: true, mode: 'warn' }, 'soft')}
+            >
+              Warn Only
+            </PolicyPill>
+            <PolicyPill
+              tone="rose"
+              active={filterMode === 'block'}
+              onClick={() => saveRule('content.explicit_blocking', { enabled: true, mode: 'block' }, 'hard')}
+            >
+              Block
+            </PolicyPill>
+            <PolicyPill
+              tone="slate"
+              active={filterMode === 'off'}
+              onClick={() => saveRule('content.explicit_blocking', { enabled: false, mode: 'off' }, 'soft')}
+            >
+              Off
+            </PolicyPill>
+          </div>
+        </div>
+
+        <div className="mb-4">
+          <div className="mb-2 flex items-center justify-between text-xs">
+            <span className="font-medium text-slate-100">Daily Screen Time Limit</span>
+            <span className="font-semibold text-brand-400">{screenHours}h</span>
+          </div>
+          <input
+            type="range"
+            min={1}
+            max={12}
+            step={1}
+            value={screenHours}
+            onChange={(event) => setScreenHours(Number(event.target.value))}
+            onMouseUp={() => saveRule('screen_time.daily_limit', { enabled: true, minutes: screenHours * 60 })}
+            className="w-full accent-brand-500"
+          />
+        </div>
+
+        <ToggleRow
+          title="Strict Mode"
+          description="Black out screens when detection is unavailable"
+          checked={strictMode}
+          onChange={(checked) => saveRule('control.strict_mode', { enabled: checked }, 'hard')}
+        />
+        <ToggleRow
+          title="Detection Alerts"
+          description="Notify parents about blocked content attempts"
+          checked={detectionAlerts}
+          onChange={(checked) => saveRule('notifications.detection_alerts', { enabled: checked }, 'soft')}
+        />
+      </section>
+
+      <section className="glass-panel p-5">
+        <h2 className="mb-4 text-sm font-semibold text-slate-100">Effective Rules</h2>
+        <div className="space-y-2">
+          {effectiveRows.map((row) => (
+            <div key={row.key} className="flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2">
+              <span className="min-w-0 flex-1 font-mono text-xs tracking-widest text-slate-400">{row.key}</span>
+              <span className={`text-sm font-semibold ${row.color}`}>{row.value}</span>
+              <span className="rounded-full bg-brand-500/10 px-2 py-1 text-[10px] font-medium text-brand-400">Profile</span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 text-xs text-slate-500">Last synced {effectivePolicy?.updatedAt ? new Date(effectivePolicy.updatedAt).toLocaleString() : 'recently'}</div>
+      </section>
+    </div>
   );
 }
 
@@ -459,26 +655,24 @@ export default function DevicesRedesignScreen() {
       ) : null}
 
       {view.mode === 'detail' && selectedProfile ? (
-        <div className="space-y-5">
-          <Breadcrumb
-            items={[
-              { label: 'Profiles', onClick: () => setView({ mode: 'list' }) },
-              { label: selectedProfile.name },
-            ]}
-          />
-          <section className="glass-panel p-5">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="space-y-4">
+          <button
+            type="button"
+            onClick={() => setView({ mode: 'list' })}
+            className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-slate-900/30 px-3 py-2 text-xs font-medium text-slate-400 transition-colors hover:border-white/20 hover:text-slate-200"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Profiles
+          </button>
+
+          <section className="glass-panel px-5 py-4">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div className="flex items-center gap-4">
                 <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${gradients[0]} text-xl font-bold text-white`}>
                   {profileInitial(selectedProfile)}
                 </div>
                 <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h1 className="text-xl font-semibold text-slate-100">{selectedProfile.name}</h1>
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${tone(selectedProfile.status)}`}>
-                      {label(selectedProfile.status)}
-                    </span>
-                  </div>
+                  <h1 className="text-lg font-semibold text-slate-100">{selectedProfile.name}</h1>
                   <p className="mt-1 text-sm text-slate-400">{profileMeta(selectedProfile)}</p>
                 </div>
               </div>
@@ -516,13 +710,7 @@ export default function DevicesRedesignScreen() {
             </div>
           </section>
 
-          <PolicyScopePanel
-            title="Profile Policy"
-            scopePath={`/profiles/${selectedProfile.id}`}
-            summary="Base rules for this child profile. Lower scopes can only override soft rules."
-            editable={selectedProfile.status !== 'archived' && selectedProfile.status !== 'deleted'}
-            defaultOpen
-          />
+          <ProfilePolicyCards profileId={selectedProfile.id} />
 
           <div id="pairing-codes">
             <PairingCodeGenerator

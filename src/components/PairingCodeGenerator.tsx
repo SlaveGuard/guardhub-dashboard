@@ -79,37 +79,40 @@ export default function PairingCodeGenerator({
   const canGenerate = !!selectedCatalogId && !disabled && !createPairingCodeMutation.isPending;
 
   return (
-    <section className="glass-panel p-5 space-y-4">
+    <section className="glass-panel space-y-4 p-5">
       <div>
-        <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Pairing Code</h3>
+        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Pairing Code</h3>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Generate a one-time code for a child-side app installation.
+          Generate a one-time 7-digit code to pair a new device. Each code is tied to a specific app and can only be used once.
         </p>
       </div>
 
-      <div className="flex flex-col gap-3 md:flex-row">
-        <select
-          value={selectedCatalogId}
-          onChange={(event) => {
-            setSelectedCatalogId(event.target.value);
-            setGeneratedCode(null);
-          }}
-          className="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition-colors focus:border-brand-500 dark:border-white/10 dark:bg-slate-900/40 dark:text-slate-100"
-        >
-          <option value="" disabled>
-            Select app
-          </option>
-          {appCatalog.map((entry) => (
-            <option key={entry.id} value={entry.id}>
-              {entry.displayName}
+      <div className="flex flex-col items-end gap-3 md:flex-row">
+        <div className="w-full flex-1">
+          <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">App</label>
+          <select
+            value={selectedCatalogId}
+            onChange={(event) => {
+              setSelectedCatalogId(event.target.value);
+              setGeneratedCode(null);
+            }}
+            className="w-full rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition-colors focus:border-brand-500 dark:border-white/10 dark:bg-slate-900/40 dark:text-slate-100"
+          >
+            <option value="" disabled>
+              -- Select app --
             </option>
-          ))}
-        </select>
+            {appCatalog.map((entry) => (
+              <option key={entry.id} value={entry.id}>
+                {entry.displayName}
+              </option>
+            ))}
+          </select>
+        </div>
         <button
           type="button"
           onClick={generate}
           disabled={!canGenerate}
-          className={`btn-primary flex items-center justify-center gap-2 rounded-lg px-5 py-3 ${
+          className={`btn-primary flex min-w-40 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-5 py-3 ${
             canGenerate ? '' : 'cursor-not-allowed opacity-40'
           }`}
         >

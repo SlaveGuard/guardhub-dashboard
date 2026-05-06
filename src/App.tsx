@@ -12,7 +12,6 @@ import DashboardScreen from './screens/dashboard/DashboardScreen';
 import TelemetryScreen from './screens/dashboard/TelemetryScreen';
 import ProfilesScreen from './screens/dashboard/DevicesRedesignScreen';
 import AlertsScreen from './screens/dashboard/AlertsScreen';
-import AuditScreen from './screens/dashboard/AuditScreen';
 import SettingsScreen from './screens/dashboard/SettingsScreen';
 import Layout from './components/Layout';
 import PublicLayout from './components/PublicLayout';
@@ -60,7 +59,6 @@ function App() {
           <Route path="/dashboard" element={<DashboardScreen />} />
           <Route path="/telemetry" element={<TelemetryScreen />} />
           <Route path="/alerts" element={<AlertsScreen />} />
-          <Route path="/audit" element={<AuditScreen />} />
           <Route path="/profiles" element={<ProfilesScreen />} />
           <Route path="/devices" element={<Navigate to="/profiles" replace />} />
           <Route path="/settings" element={<SettingsScreen />} />
