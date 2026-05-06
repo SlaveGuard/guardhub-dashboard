@@ -10,7 +10,7 @@ import ForgotPasswordScreen from './screens/auth/ForgotPasswordScreen';
 import ResetPasswordScreen from './screens/auth/ResetPasswordScreen';
 import DashboardScreen from './screens/dashboard/DashboardScreen';
 import TelemetryScreen from './screens/dashboard/TelemetryScreen';
-import ProfilesScreen from './screens/dashboard/DevicesScreen';
+import ProfilesScreen from './screens/dashboard/DevicesRedesignScreen';
 import AlertsScreen from './screens/dashboard/AlertsScreen';
 import AuditScreen from './screens/dashboard/AuditScreen';
 import SettingsScreen from './screens/dashboard/SettingsScreen';

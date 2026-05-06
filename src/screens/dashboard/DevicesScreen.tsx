@@ -183,7 +183,7 @@ function label(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-function PolicyScopePanel({
+export function PolicyScopePanel({
   title,
   scopePath,
   summary,
