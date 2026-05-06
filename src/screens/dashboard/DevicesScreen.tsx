@@ -205,12 +205,14 @@ export function PolicyScopePanel({
   summary,
   editable = true,
   defaultOpen = false,
+  isDeviceScope = false,
 }: {
   title: string;
   scopePath: string;
   summary: string;
   editable?: boolean;
   defaultOpen?: boolean;
+  isDeviceScope?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -223,9 +225,6 @@ export function PolicyScopePanel({
     lockdownEnabled: false,
     detectionAlertsEnabled: true,
   });
-  // REASON: profile/app policy panels do not have a command endpoint; only device policy changes can send FCM commands.
-  const isDeviceScope = scopePath.startsWith('/devices/');
-
   const { data: directPolicy, isLoading: directLoading } = useQuery<AnyRecord>({
     queryKey: [scopePath, 'policy'],
     queryFn: async () => (await apiClient.get(`${scopePath}/policy`)).data,
@@ -236,6 +235,7 @@ export function PolicyScopePanel({
     queryKey: [scopePath, 'effective-policy'],
     queryFn: async () => (await apiClient.get(`${scopePath}/effective-policy`)).data,
     enabled: isOpen,
+    refetchInterval: 15_000,
   });
 
   const patchPolicyMutation = useMutation({
@@ -264,6 +264,15 @@ export function PolicyScopePanel({
     },
   });
 
+  const syncConfigMutation = useMutation({
+    mutationFn: async () =>
+      (await apiClient.post(`${scopePath}/command`, { command: 'SYNC_CONFIG' })).data,
+    onError: (error: any) => {
+      // REASON: SYNC_CONFIG is best-effort; do not block the UI on push failure.
+      console.warn('SYNC_CONFIG push failed:', error?.response?.data?.message ?? error.message);
+    },
+  });
+
   useEffect(() => {
     if (!directPolicy?.entries) {
       return;
@@ -286,6 +295,11 @@ export function PolicyScopePanel({
       detectionAlertsEnabled: detectionAlertRule?.value?.enabled ?? true,
     });
   }, [directPolicy]);
+
+  const realProtectionActive: boolean | null =
+    (effectivePolicy?.context as any)?.protectionActive ?? null;
+  const realLockdownActive: boolean | null =
+    (effectivePolicy?.context as any)?.lockdownActive ?? null;
 
   const saveEntry = () => {
     if (!form.key.trim()) {
@@ -367,6 +381,15 @@ export function PolicyScopePanel({
                   <div className="font-medium text-slate-900 dark:text-slate-100">Explicit Blocking</div>
                   <label className="flex items-center justify-between text-sm text-slate-700 dark:text-slate-300">
                     <span>Enabled</span>
+                    <span className={`ml-2 text-xs font-semibold px-2 py-0.5 rounded-full ${
+                      realProtectionActive === true
+                        ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
+                        : realProtectionActive === false
+                        ? 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'
+                        : 'bg-slate-100 text-slate-500 dark:bg-dark-700 dark:text-slate-400'
+                    }`}>
+                      {realProtectionActive === null ? 'Unknown' : realProtectionActive ? 'On device' : 'Off device'}
+                    </span>
                     <input
                       type="checkbox"
                       checked={quickRuleState.explicitBlockingEnabled}
@@ -388,7 +411,7 @@ export function PolicyScopePanel({
                   </select>
                   <div className="flex gap-2">
                     <button
-                      onClick={() =>
+                      onClick={() => {
                         saveQuickRule(
                           'content.explicit_blocking',
                           {
@@ -396,10 +419,11 @@ export function PolicyScopePanel({
                             mode: quickRuleState.explicitBlockingMode,
                           },
                           'hard',
-                        )
-                      }
+                        );
+                        if (isDeviceScope) syncConfigMutation.mutate();
+                      }}
                       className="btn-primary"
-                      disabled={patchPolicyMutation.isPending}
+                      disabled={patchPolicyMutation.isPending || syncConfigMutation.isPending}
                     >
                       Save Hard Rule
                     </button>
@@ -465,6 +489,15 @@ export function PolicyScopePanel({
                   <div className="font-medium text-slate-900 dark:text-slate-100">Lockdown</div>
                   <label className="flex items-center justify-between text-sm text-slate-700 dark:text-slate-300">
                     <span>Enabled</span>
+                    <span className={`ml-2 text-xs font-semibold px-2 py-0.5 rounded-full ${
+                      realLockdownActive === true
+                        ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
+                        : realLockdownActive === false
+                        ? 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'
+                        : 'bg-slate-100 text-slate-500 dark:bg-dark-700 dark:text-slate-400'
+                    }`}>
+                      {realLockdownActive === null ? 'Unknown' : realLockdownActive ? 'Locked' : 'Unlocked'}
+                    </span>
                     <input
                       type="checkbox"
                       checked={quickRuleState.lockdownEnabled}
@@ -1561,6 +1594,7 @@ export default function DevicesScreen() {
                               scopePath={`/devices/${device.id}`}
                               summary="Device-specific overrides layered on top of the child profile."
                               editable={selectedProfile.status !== 'archived' && selectedProfile.status !== 'deleted'}
+                              isDeviceScope={true}
                             />
                           </div>
                           <div className="mt-4 grid grid-cols-1 xl:grid-cols-2 gap-4">
