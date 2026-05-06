@@ -183,6 +183,22 @@ function label(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
+function runtimeStatusTone(value: boolean | null) {
+  if (value === true) return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-400';
+  if (value === false) return 'bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-400';
+  return 'bg-slate-100 text-slate-600 dark:bg-dark-700 dark:text-slate-300';
+}
+
+function RuntimeStatusBadge({ label, value }: { label: string; value: boolean | null }) {
+  const text = value === true ? 'Active' : value === false ? 'Inactive' : 'Unknown';
+
+  return (
+    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${runtimeStatusTone(value)}`}>
+      {label}: {text}
+    </span>
+  );
+}
+
 export function PolicyScopePanel({
   title,
   scopePath,
@@ -207,6 +223,8 @@ export function PolicyScopePanel({
     lockdownEnabled: false,
     detectionAlertsEnabled: true,
   });
+  // REASON: profile/app policy panels do not have a command endpoint; only device policy changes can send FCM commands.
+  const isDeviceScope = scopePath.startsWith('/devices/');
 
   const { data: directPolicy, isLoading: directLoading } = useQuery<AnyRecord>({
     queryKey: [scopePath, 'policy'],
@@ -232,6 +250,17 @@ export function PolicyScopePanel({
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.message || `Failed to update ${title.toLowerCase()}`);
+    },
+  });
+
+  const sendCommandMutation = useMutation({
+    mutationFn: async (command: string) => (await apiClient.post(`${scopePath}/command`, { command })).data,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['profile'] });
+      toast.success('Device command sent.');
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.message || 'Failed to send device command');
     },
   });
 
@@ -304,6 +333,14 @@ export function PolicyScopePanel({
       ],
     });
   };
+
+  const saveLockdownRule = (strength: string) => {
+    saveQuickRule('control.lockdown', { enabled: quickRuleState.lockdownEnabled }, strength);
+    if (isDeviceScope) {
+      sendCommandMutation.mutate(quickRuleState.lockdownEnabled ? 'LOCKDOWN' : 'UNLOCK');
+    }
+  };
+  const lockdownButtonsDisabled = patchPolicyMutation.isPending || sendCommandMutation.isPending;
 
   return (
     <div className="rounded-2xl border border-slate-200 dark:border-white/10 overflow-hidden">
@@ -438,28 +475,16 @@ export function PolicyScopePanel({
                   </label>
                   <div className="flex gap-2">
                     <button
-                      onClick={() =>
-                        saveQuickRule(
-                          'control.lockdown',
-                          { enabled: quickRuleState.lockdownEnabled },
-                          'hard',
-                        )
-                      }
+                      onClick={() => saveLockdownRule('hard')}
                       className="btn-primary"
-                      disabled={patchPolicyMutation.isPending}
+                      disabled={lockdownButtonsDisabled}
                     >
                       Save Hard Lockdown
                     </button>
                     <button
-                      onClick={() =>
-                        saveQuickRule(
-                          'control.lockdown',
-                          { enabled: quickRuleState.lockdownEnabled },
-                          'soft',
-                        )
-                      }
+                      onClick={() => saveLockdownRule('soft')}
                       className="px-4 py-2 rounded-xl border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-200"
-                      disabled={patchPolicyMutation.isPending}
+                      disabled={lockdownButtonsDisabled}
                     >
                       Save Soft Lockdown
                     </button>
@@ -791,6 +816,7 @@ export default function DevicesScreen() {
     queryKey: ['profile', selectedProfileId],
     queryFn: async () => (await apiClient.get(`/profiles/${selectedProfileId}`)).data,
     enabled: !!selectedProfileId,
+    refetchInterval: 15_000,
   });
 
   const profileDetailQueries = useQueries({
@@ -1524,6 +1550,10 @@ export default function DevicesScreen() {
                             <div className="text-sm text-slate-500 dark:text-slate-400">
                               {device.lastSeen ? `Last seen ${new Date(device.lastSeen).toLocaleString()}` : 'No activity reported yet'}
                             </div>
+                          </div>
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <RuntimeStatusBadge value={device.protectionActive ?? null} label="Protection" />
+                            <RuntimeStatusBadge value={device.lockdownActive ?? null} label="Lockdown" />
                           </div>
                           <div className="mt-4">
                             <PolicyScopePanel
