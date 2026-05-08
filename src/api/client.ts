@@ -1,6 +1,7 @@
 import axios, { AxiosError } from 'axios';
 import type { InternalAxiosRequestConfig } from 'axios';
 import { useAuthStore } from '../store/authStore';
+import { logger } from '../lib/logger';
 
 const configuredApiUrl = import.meta.env.VITE_API_URL?.trim();
 
@@ -38,6 +39,7 @@ async function refreshAccessToken() {
   }
 
   if (!refreshPromise) {
+    logger.info('ApiClient', 'Token refresh triggered');
     refreshPromise = apiClient
       .post('/auth/refresh', { refreshToken })
       .then((response) => {
@@ -51,6 +53,9 @@ async function refreshAccessToken() {
         return nextAccessToken;
       })
       .catch((error) => {
+        logger.error('ApiClient', 'Token refresh failed, user will be logged out', {
+          message: error?.response?.data?.message ?? error.message,
+        });
         logout();
         throw error;
       })
@@ -63,6 +68,10 @@ async function refreshAccessToken() {
 }
 
 apiClient.interceptors.request.use((config) => {
+  logger.debug('ApiClient', 'API request sent', {
+    method: config.method?.toUpperCase(),
+    url: config.url,
+  });
   const token = useAuthStore.getState().token;
   if (token && config.headers) {
     config.headers.Authorization = `Bearer ${token}`;
@@ -71,11 +80,26 @@ apiClient.interceptors.request.use((config) => {
 });
 
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    logger.info('ApiClient', 'API response received', {
+      status: response.status,
+      url: response.config.url,
+    });
+    return response;
+  },
   async (error: AxiosError) => {
     const requestUrl = String(error.config?.url || '');
     const originalRequest = error.config as RetriableRequestConfig | undefined;
     const { token, refreshToken, logout } = useAuthStore.getState();
+    const status = error.response?.status;
+    const message =
+      (error.response?.data as { message?: string } | undefined)?.message ?? error.message;
+
+    if (status && status >= 500) {
+      logger.error('ApiClient', 'API response 5xx', { status, url: requestUrl, message });
+    } else if (status && status >= 400) {
+      logger.warning('ApiClient', 'API response 4xx', { status, url: requestUrl, message });
+    }
 
     if (
       error.response?.status === 401 &&
@@ -94,6 +118,10 @@ apiClient.interceptors.response.use(
         }
         return apiClient(originalRequest);
       } catch (refreshError) {
+        logger.error('ApiClient', 'Token refresh failed, user will be logged out', {
+          message:
+            (refreshError as any)?.response?.data?.message ?? (refreshError as Error).message,
+        });
         logout();
         window.location.href = '/login';
         return Promise.reject(refreshError);

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { logger } from '../lib/logger';
 
 interface AuthState {
   token: string | null;
@@ -27,12 +28,20 @@ export const useAuthStore = create<AuthState>()(
           user: state.user,
         })),
 
-      logout: () => set({ token: null, refreshToken: null, user: null }),
+      logout: () => {
+        logger.info('AuthStore', 'User logged out');
+        set({ token: null, refreshToken: null, user: null });
+      },
 
       isAuthenticated: () => !!get().token,
     }),
     {
       name: 'guardhub-auth-storage',
+      onRehydrateStorage: () => (state) => {
+        logger.info('AuthStore', 'Auth state initialised', {
+          isAuthenticated: !!state?.token,
+        });
+      },
     },
   ),
 );

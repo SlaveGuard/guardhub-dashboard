@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { apiClient } from '../../api/client';
+import { logger } from '../../lib/logger';
 
 type Family = { id: string; name: string } | null;
 type AnyRecord = Record<string, any>;
@@ -239,7 +240,15 @@ export function PolicyScopePanel({
   });
 
   const patchPolicyMutation = useMutation({
-    mutationFn: async (payload: AnyRecord) => (await apiClient.patch(`${scopePath}/policy`, payload)).data,
+    mutationFn: async (payload: AnyRecord) => {
+      const firstEntry = payload.entries?.[0];
+      logger.info('PolicyScopePanel', 'patchPolicyMutation fired', {
+        scope: scopePath,
+        key: firstEntry?.key,
+        operation: firstEntry?.operation ?? 'upsert',
+      });
+      return (await apiClient.patch(`${scopePath}/policy`, payload)).data;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [scopePath, 'policy'] });
       queryClient.invalidateQueries({ queryKey: [scopePath, 'effective-policy'] });
@@ -249,27 +258,43 @@ export function PolicyScopePanel({
       toast.success(`${title} updated.`);
     },
     onError: (error: any) => {
+      logger.warning('PolicyScopePanel', 'patchPolicyMutation error', {
+        message: error.response?.data?.message ?? error.message,
+      });
       toast.error(error.response?.data?.message || `Failed to update ${title.toLowerCase()}`);
     },
   });
 
   const sendCommandMutation = useMutation({
-    mutationFn: async (command: string) => (await apiClient.post(`${scopePath}/command`, { command })).data,
+    mutationFn: async (command: string) => {
+      logger.info('PolicyScopePanel', 'sendCommandMutation fired', {
+        scope: scopePath,
+        command,
+      });
+      return (await apiClient.post(`${scopePath}/command`, { command })).data;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['profile'] });
       toast.success('Device command sent.');
     },
     onError: (error: any) => {
+      logger.warning('PolicyScopePanel', 'sendCommandMutation error', {
+        message: error.response?.data?.message ?? error.message,
+      });
       toast.error(error.response?.data?.message || 'Failed to send device command');
     },
   });
 
   const syncConfigMutation = useMutation({
-    mutationFn: async () =>
-      (await apiClient.post(`${scopePath}/command`, { command: 'SYNC_CONFIG' })).data,
+    mutationFn: async () => {
+      logger.info('PolicyScopePanel', 'syncConfigMutation fired', { scope: scopePath });
+      return (await apiClient.post(`${scopePath}/command`, { command: 'SYNC_CONFIG' })).data;
+    },
     onError: (error: any) => {
       // REASON: SYNC_CONFIG is best-effort; do not block the UI on push failure.
-      console.warn('SYNC_CONFIG push failed:', error?.response?.data?.message ?? error.message);
+      logger.warning('PolicyScopePanel', 'syncConfigMutation error', {
+        message: error?.response?.data?.message ?? error.message,
+      });
     },
   });
 
@@ -286,20 +311,33 @@ export function PolicyScopePanel({
     const lockdownRule = directByKey.get('control.lockdown') as AnyRecord | undefined;
     const detectionAlertRule = directByKey.get('notifications.detection_alerts') as AnyRecord | undefined;
 
-    setQuickRuleState({
+    const nextQuickRuleState = {
       explicitBlockingEnabled: explicitRule?.value?.enabled ?? true,
       explicitBlockingMode: explicitRule?.value?.mode ?? 'blur',
       dailyMinutesEnabled: dailyLimitRule?.value?.enabled ?? false,
       dailyMinutes: String(dailyLimitRule?.value?.minutes ?? 120),
       lockdownEnabled: lockdownRule?.value?.enabled ?? false,
       detectionAlertsEnabled: detectionAlertRule?.value?.enabled ?? true,
-    });
+    };
+    logger.debug('PolicyScopePanel', 'quickRuleState populated from directPolicy', nextQuickRuleState);
+    setQuickRuleState(nextQuickRuleState);
   }, [directPolicy]);
 
   const realProtectionActive: boolean | null =
     (effectivePolicy?.context as any)?.protectionActive ?? null;
   const realLockdownActive: boolean | null =
     (effectivePolicy?.context as any)?.lockdownActive ?? null;
+
+  useEffect(() => {
+    if (!effectivePolicy?.context) {
+      return;
+    }
+
+    logger.debug('PolicyScopePanel', 'effectivePolicy context received', {
+      protectionActive: realProtectionActive,
+      lockdownActive: realLockdownActive,
+    });
+  }, [effectivePolicy?.context, realLockdownActive, realProtectionActive]);
 
   const saveEntry = () => {
     if (!form.key.trim()) {
@@ -349,6 +387,10 @@ export function PolicyScopePanel({
   };
 
   const saveLockdownRule = (strength: string) => {
+    logger.info('PolicyScopePanel', 'saveLockdownRule called', {
+      lockdownEnabled: quickRuleState.lockdownEnabled,
+      strength,
+    });
     saveQuickRule('control.lockdown', { enabled: quickRuleState.lockdownEnabled }, strength);
     if (isDeviceScope) {
       sendCommandMutation.mutate(quickRuleState.lockdownEnabled ? 'LOCKDOWN' : 'UNLOCK');

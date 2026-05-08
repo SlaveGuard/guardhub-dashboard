@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { apiClient } from '../../api/client';
 import { useAuthStore } from '../../store/authStore';
+import { logger } from '../../lib/logger';
 
 export default function LoginScreen() {
   const navigate = useNavigate();
@@ -15,6 +16,7 @@ export default function LoginScreen() {
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    logger.info('LoginScreen', 'Login attempt', { email });
     try {
       const res = await apiClient.post('/auth/login', { email, password });
 
@@ -28,11 +30,13 @@ export default function LoginScreen() {
         : { email, name: email };
 
       setAuth(token, refreshToken, user);
+      logger.info('LoginScreen', 'Login succeeded', { userId: res.data.user?.id });
       
       toast.success('Welcome back to GuardHub');
       navigate('/dashboard');
     } catch (error: any) {
       const message = error.response?.data?.message || 'Login failed. Please try again.';
+      logger.warning('LoginScreen', 'Login failed', { message });
       if (error.response?.status === 403 && typeof message === 'string' && message.toLowerCase().includes('verify')) {
         toast.error(message);
         navigate(`/verify-email?email=${encodeURIComponent(email)}`);
