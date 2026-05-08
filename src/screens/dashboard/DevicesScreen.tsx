@@ -239,6 +239,15 @@ export function PolicyScopePanel({
     refetchInterval: 15_000,
   });
 
+  const { data: deviceRecord } = useQuery<AnyRecord>({
+    queryKey: ['device', deviceId],
+    queryFn: async () => (await apiClient.get(`/devices/${deviceId}`)).data,
+    enabled: isOpen && !!deviceId,
+    refetchInterval: 10_000,
+    // REASON: poll every 10s so the badge reflects heartbeat updates
+    // without requiring a manual page refresh.
+  });
+
   const patchPolicyMutation = useMutation({
     mutationFn: async (payload: AnyRecord) => {
       const firstEntry = payload.entries?.[0];
@@ -332,10 +341,8 @@ export function PolicyScopePanel({
     setQuickRuleState(nextQuickRuleState);
   }, [directPolicy]);
 
-  const realProtectionActive: boolean | null =
-    (effectivePolicy?.context as any)?.protectionActive ?? null;
-  const realLockdownActive: boolean | null =
-    (effectivePolicy?.context as any)?.lockdownActive ?? null;
+  const realProtectionActive: boolean | null = deviceRecord?.protectionActive ?? null;
+  const realLockdownActive: boolean | null = deviceRecord?.lockdownActive ?? null;
 
   useEffect(() => {
     if (!effectivePolicy?.context) {
@@ -884,6 +891,10 @@ export default function DevicesScreen() {
     queryKey: ['profiles'],
     queryFn: async () => (await apiClient.get('/profiles')).data,
     enabled: !!family,
+    refetchInterval: 15_000,
+    // REASON: refresh every 15s so the device status badges
+    // (Protection: Active/Inactive, Lockdown: Active/Inactive)
+    // reflect the latest heartbeat without user interaction.
   });
 
   const { data: archivedProfiles = [], isLoading: archivedProfilesLoading } = useQuery<AnyRecord[]>({

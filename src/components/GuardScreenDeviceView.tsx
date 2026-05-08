@@ -18,6 +18,27 @@ function policyEnabled(policy: AnyRecord | undefined, key: string, fallback = tr
   return fallback;
 }
 
+function runtimeStatus(value: boolean | null) {
+  if (value === true) {
+    return {
+      label: 'Active',
+      className: 'bg-emerald-400/10 text-emerald-400',
+    };
+  }
+
+  if (value === false) {
+    return {
+      label: 'Inactive',
+      className: 'bg-rose-400/10 text-rose-400',
+    };
+  }
+
+  return {
+    label: 'Unknown',
+    className: 'bg-slate-500/10 text-slate-400',
+  };
+}
+
 function deviceName(device: AnyRecord) {
   return device.deviceName || device.name || 'Device';
 }
@@ -74,7 +95,17 @@ export default function GuardScreenDeviceView({
     enabled: !!installationId,
   });
 
-  const protectionActive = useMemo(
+  const { data: liveDevice } = useQuery<AnyRecord>({
+    queryKey: ['device', device.id],
+    queryFn: async () => (await apiClient.get(`/devices/${device.id}`)).data,
+    enabled: !!device.id,
+    refetchInterval: 10_000,
+    initialData: device,
+    // REASON: initialData seeds from the profile query instantly;
+    // polling keeps it fresh without waiting for parent re-render.
+  });
+
+  const explicitBlockingEnabled = useMemo(
     () => policyEnabled(effectivePolicy, 'content.explicit_blocking', true),
     [effectivePolicy],
   );
@@ -82,6 +113,10 @@ export default function GuardScreenDeviceView({
     () => policyEnabled(effectivePolicy, 'control.lock_settings', true),
     [effectivePolicy],
   );
+  const protectionActive: boolean | null = liveDevice?.protectionActive ?? null;
+  const lockdownActive: boolean | null = liveDevice?.lockdownActive ?? null;
+  const protectionStatus = runtimeStatus(protectionActive);
+  const lockdownStatus = runtimeStatus(lockdownActive);
 
   const patchPolicyMutation = useMutation({
     mutationFn: async (entry: { key: string; enabled: boolean; strength?: string }) =>
@@ -106,14 +141,9 @@ export default function GuardScreenDeviceView({
   });
 
   const syncMutation = useMutation({
-    mutationFn: async () => (await apiClient.post(`/devices/${device.id}/sync`, {})).data,
+    mutationFn: async () => (await apiClient.post(`/devices/${device.id}/command`, { command: 'SYNC_CONFIG' })).data,
     onSuccess: () => toast.success('Sync requested.'),
     onError: (error: AnyRecord) => {
-      if (error.response?.status === 404) {
-        // TODO: Remove this fallback once POST /devices/:deviceId/sync is available in every environment.
-        toast.success('Sync requested.');
-        return;
-      }
       toast.error(error.response?.data?.message || 'Failed to request sync');
     },
   });
@@ -128,9 +158,15 @@ export default function GuardScreenDeviceView({
           <div className="min-w-0 flex-1">
             <h2 className="text-lg font-semibold text-slate-100">{deviceName(device)} - GuardScreen</h2>
             <p className="mt-1 text-xs text-slate-400">{deviceMeta(device)}</p>
-            <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-emerald-400/10 px-2.5 py-1 text-xs font-semibold text-emerald-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-current" />
-              Protection Active
+            <div className="mt-2 flex flex-wrap gap-2">
+              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${protectionStatus.className}`}>
+                <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                Protection {protectionStatus.label}
+              </span>
+              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${lockdownStatus.className}`}>
+                <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                Lockdown {lockdownStatus.label}
+              </span>
             </div>
           </div>
           <button
@@ -151,7 +187,7 @@ export default function GuardScreenDeviceView({
           <ToggleRow
             title="Protection Active"
             description="Remotely enable or disable content protection on this device"
-            checked={protectionActive}
+            checked={explicitBlockingEnabled}
             disabled={patchPolicyMutation.isPending}
             onChange={(enabled) => patchPolicyMutation.mutate({ key: 'content.explicit_blocking', enabled })}
           />
