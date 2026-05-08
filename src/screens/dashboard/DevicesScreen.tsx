@@ -203,17 +203,17 @@ function RuntimeStatusBadge({ label, value }: { label: string; value: boolean | 
 export function PolicyScopePanel({
   title,
   scopePath,
+  deviceId,
   summary,
   editable = true,
   defaultOpen = false,
-  isDeviceScope = false,
 }: {
   title: string;
   scopePath: string;
+  deviceId?: string;
   summary: string;
   editable?: boolean;
   defaultOpen?: boolean;
-  isDeviceScope?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -267,11 +267,14 @@ export function PolicyScopePanel({
 
   const sendCommandMutation = useMutation({
     mutationFn: async (command: string) => {
+      if (!deviceId) {
+        throw new Error('Device ID is required to send device command');
+      }
       logger.info('PolicyScopePanel', 'sendCommandMutation fired', {
-        scope: scopePath,
+        deviceId,
         command,
       });
-      return (await apiClient.post(`${scopePath}/command`, { command })).data;
+      return (await apiClient.post(`/devices/${deviceId}/command`, { command })).data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['profile'] });
@@ -287,13 +290,19 @@ export function PolicyScopePanel({
 
   const syncConfigMutation = useMutation({
     mutationFn: async () => {
-      logger.info('PolicyScopePanel', 'syncConfigMutation fired', { scope: scopePath });
-      return (await apiClient.post(`${scopePath}/command`, { command: 'SYNC_CONFIG' })).data;
+      if (!deviceId) {
+        throw new Error('Device ID is required to request sync');
+      }
+      return (await apiClient.post(`/devices/${deviceId}/command`, { command: 'SYNC_CONFIG' })).data;
+    },
+    onSuccess: () => {
+      logger.info('DevicesScreen', 'SYNC_CONFIG dispatched', { deviceId });
+      toast.success('Sync requested');
     },
     onError: (error: any) => {
       // REASON: SYNC_CONFIG is best-effort; do not block the UI on push failure.
-      logger.warning('PolicyScopePanel', 'syncConfigMutation error', {
-        message: error?.response?.data?.message ?? error.message,
+      logger.warning('DevicesScreen', 'SYNC_CONFIG dispatch failed', {
+        error: error?.response?.data?.message ?? error.message,
       });
     },
   });
@@ -340,7 +349,8 @@ export function PolicyScopePanel({
   }, [effectivePolicy?.context, realLockdownActive, realProtectionActive]);
 
   const saveEntry = () => {
-    if (!form.key.trim()) {
+    const key = form.key.trim();
+    if (!key) {
       toast.error('Policy key is required');
       return;
     }
@@ -350,13 +360,16 @@ export function PolicyScopePanel({
       patchPolicyMutation.mutate({
         entries: [
           {
-            key: form.key.trim(),
+            key,
             value: parsed,
             strength: form.strength,
             operation: 'upsert',
           },
         ],
       });
+      if (key === 'control.lock_settings' && deviceId) {
+        syncConfigMutation.mutate();
+      }
     } catch {
       toast.error('Policy value must be valid JSON');
     }
@@ -371,6 +384,9 @@ export function PolicyScopePanel({
         },
       ],
     });
+    if (key === 'control.lock_settings' && deviceId) {
+      syncConfigMutation.mutate();
+    }
   };
 
   const saveQuickRule = (key: string, value: AnyRecord, strength: string) => {
@@ -392,7 +408,7 @@ export function PolicyScopePanel({
       strength,
     });
     saveQuickRule('control.lockdown', { enabled: quickRuleState.lockdownEnabled }, strength);
-    if (isDeviceScope) {
+    if (deviceId) {
       sendCommandMutation.mutate(quickRuleState.lockdownEnabled ? 'LOCKDOWN' : 'UNLOCK');
     }
   };
@@ -462,7 +478,7 @@ export function PolicyScopePanel({
                           },
                           'hard',
                         );
-                        if (isDeviceScope) syncConfigMutation.mutate();
+                        if (deviceId) syncConfigMutation.mutate();
                       }}
                       className="btn-primary"
                       disabled={patchPolicyMutation.isPending || syncConfigMutation.isPending}
@@ -470,7 +486,7 @@ export function PolicyScopePanel({
                       Save Hard Rule
                     </button>
                     <button
-                      onClick={() =>
+                      onClick={() => {
                         saveQuickRule(
                           'content.explicit_blocking',
                           {
@@ -478,10 +494,11 @@ export function PolicyScopePanel({
                             mode: quickRuleState.explicitBlockingMode,
                           },
                           'soft',
-                        )
-                      }
+                        );
+                        if (deviceId) syncConfigMutation.mutate();
+                      }}
                       className="px-4 py-2 rounded-xl border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-200"
-                      disabled={patchPolicyMutation.isPending}
+                      disabled={patchPolicyMutation.isPending || syncConfigMutation.isPending}
                     >
                       Save Soft Rule
                     </button>
@@ -1634,9 +1651,9 @@ export default function DevicesScreen() {
                             <PolicyScopePanel
                               title={`${device.name} Device Policy`}
                               scopePath={`/devices/${device.id}`}
+                              deviceId={device.id}
                               summary="Device-specific overrides layered on top of the child profile."
                               editable={selectedProfile.status !== 'archived' && selectedProfile.status !== 'deleted'}
-                              isDeviceScope={true}
                             />
                           </div>
                           <div className="mt-4 grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -1715,6 +1732,7 @@ export default function DevicesScreen() {
                                   <PolicyScopePanel
                                     title={`${installation.displayName || installation.appCatalog.displayName} App Policy`}
                                     scopePath={`/apps/${installation.id}`}
+                                    deviceId={device.id}
                                     summary="App-specific rules layered on top of profile and device policy."
                                     editable={selectedProfile.status !== 'archived' && selectedProfile.status !== 'deleted'}
                                   />
