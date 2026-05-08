@@ -45,6 +45,10 @@
     @apply bg-brand-600 hover:bg-brand-500 text-white font-medium py-3 px-6 rounded-xl transition-all active:scale-95 shadow-lg shadow-brand-500/20 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
+  .btn-secondary {
+    @apply border border-slate-200 dark:border-white/10 bg-white/70 dark:bg-dark-800/70 hover:border-brand-500/40 text-slate-700 dark:text-slate-200 font-medium py-3 px-6 rounded-xl transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
   .btn-danger {
     @apply bg-accent-rose hover:bg-red-500 text-white font-medium py-3 px-6 rounded-xl transition-all active:scale-95 shadow-lg shadow-red-500/20;
   }

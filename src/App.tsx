@@ -13,6 +13,9 @@ import TelemetryScreen from './screens/dashboard/TelemetryScreen';
 import ProfilesScreen from './screens/dashboard/DevicesRedesignScreen';
 import AlertsScreen from './screens/dashboard/AlertsScreen';
 import SettingsScreen from './screens/dashboard/SettingsScreen';
+import SubscriptionScreen from './screens/dashboard/SubscriptionScreen';
+import SubscriptionSuccessScreen from './screens/dashboard/SubscriptionSuccessScreen';
+import SubscriptionCancelScreen from './screens/dashboard/SubscriptionCancelScreen';
 import Layout from './components/Layout';
 import PublicLayout from './components/PublicLayout';
 
@@ -62,6 +65,9 @@ function App() {
           <Route path="/profiles" element={<ProfilesScreen />} />
           <Route path="/devices" element={<Navigate to="/profiles" replace />} />
           <Route path="/settings" element={<SettingsScreen />} />
+          <Route path="/subscription" element={<SubscriptionScreen />} />
+          <Route path="/subscription/success" element={<SubscriptionSuccessScreen />} />
+          <Route path="/subscription/cancel" element={<SubscriptionCancelScreen />} />
         </Route>
       </Routes>
     </BrowserRouter>

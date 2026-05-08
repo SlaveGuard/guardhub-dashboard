@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, ShieldAlert, Settings, LogOut, Activity, Siren } from 'lucide-react';
+import { LayoutDashboard, Users, ShieldAlert, Settings, LogOut, Activity, Siren, CreditCard } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 
 export default function Sidebar() {
@@ -18,6 +18,7 @@ export default function Sidebar() {
     { name: 'Alerts', path: '/alerts', icon: Siren },
     { name: 'Profiles', path: '/profiles', icon: Users },
     { name: 'Settings', path: '/settings', icon: Settings },
+    { name: 'Subscription', path: '/subscription', icon: CreditCard },
   ];
 
   return (

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, PauseCircle, PlayCircle, Plus, ShieldCheck, Users } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { apiClient } from '../../api/client';
@@ -8,6 +9,7 @@ import GuardScreenDeviceView from '../../components/GuardScreenDeviceView';
 import KidsControlCenter from '../../components/KidsControlCenter';
 import LinkedDeviceGroup from '../../components/LinkedDeviceGroup';
 import PairingCodeGenerator from '../../components/PairingCodeGenerator';
+import { showPlanLimitToast } from '../../lib/planLimitToast';
 
 type Family = { id: string; name: string } | null;
 type AnyRecord = Record<string, any>;
@@ -349,6 +351,7 @@ function MissingInstallation() {
 }
 
 export default function DevicesRedesignScreen() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [familyName, setFamilyName] = useState('My Family');
   const [profileForm, setProfileForm] = useState(emptyProfileForm);
@@ -420,7 +423,7 @@ export default function DevicesRedesignScreen() {
       queryClient.invalidateQueries({ queryKey: ['subscription', 'limits'] });
       toast.success('Family created.');
     },
-    onError: (error: AnyRecord) => toast.error(error.response?.data?.message || 'Failed to create family'),
+    onError: (error: AnyRecord) => showPlanLimitToast(error, 'Failed to create family', navigate),
   });
 
   const createProfileMutation = useMutation({
@@ -434,7 +437,7 @@ export default function DevicesRedesignScreen() {
       setView({ mode: 'detail', profileId: profile.id });
       toast.success('Child profile created.');
     },
-    onError: (error: AnyRecord) => toast.error(error.response?.data?.message || 'Failed to create profile'),
+    onError: (error: AnyRecord) => showPlanLimitToast(error, 'Failed to create profile', navigate),
   });
 
   const lifecycleMutation = useMutation({
@@ -451,7 +454,7 @@ export default function DevicesRedesignScreen() {
       queryClient.invalidateQueries({ queryKey: ['subscription', 'limits'] });
       toast.success(`Profile ${pastTense(payload.action)}.`);
     },
-    onError: (error: AnyRecord) => toast.error(error.response?.data?.message || 'Profile action failed'),
+    onError: (error: AnyRecord) => showPlanLimitToast(error, 'Profile action failed', navigate),
   });
 
   const handleCreateProfile = () => {

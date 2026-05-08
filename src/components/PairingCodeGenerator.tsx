@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { Check, Copy, KeyRound, RefreshCcw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { apiClient } from '../api/client';
+import { showPlanLimitToast } from '../lib/planLimitToast';
 
 type AnyRecord = Record<string, any>;
 
@@ -33,6 +35,7 @@ export default function PairingCodeGenerator({
   disabled?: boolean;
 }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [selectedCatalogId, setSelectedCatalogId] = useState('');
   const [generatedCode, setGeneratedCode] = useState<AnyRecord | null>(null);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
@@ -53,7 +56,7 @@ export default function PairingCodeGenerator({
       toast.success('Pairing code generated.');
     },
     onError: (error: AnyRecord) => {
-      toast.error(error.response?.data?.message || 'Failed to generate pairing code');
+      showPlanLimitToast(error, 'Failed to generate pairing code', navigate);
     },
   });
 
