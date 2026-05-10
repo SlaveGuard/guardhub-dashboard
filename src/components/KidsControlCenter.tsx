@@ -1,20 +1,60 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  Accessibility,
+  Activity,
   BarChart3,
+  Battery,
   Clock,
   Lock,
   Pause,
   RefreshCcw,
   Search,
   ShieldAlert,
+  ShieldCheck,
   Smartphone,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { apiClient } from '../api/client';
 
 type AnyRecord = Record<string, any>;
 type TabId = 'overview' | 'screen-time' | 'apps' | 'web-filter' | 'bedtime' | 'reports';
+
+interface KidsUsageSummary {
+  packageName: string;
+  dateKey: string;
+  usageSeconds: number;
+}
+
+interface KidsBlockedEvent {
+  packageName: string;
+  reason: string;
+  message: string;
+  occurredAtEpochMillis: number;
+  reportedAt: string;
+}
+
+interface KidsHeartbeat {
+  policyVersion: number | null;
+  batteryLevelPercent: number | null;
+  managementMode: string | null;
+  permissions: {
+    usageAccess?: boolean;
+    deviceAdmin?: boolean;
+    notifications?: boolean;
+    batteryOptimizationIgnored?: boolean;
+    accessibilityFallback?: boolean;
+  } | null;
+  lastSyncEpochMillis: number | null;
+  receivedAt: string;
+}
+
+interface DeviceHealthItem {
+  label: string;
+  active: boolean;
+  Icon: LucideIcon;
+}
 
 const tabs: Array<{ id: TabId; label: string }> = [
   { id: 'overview', label: 'Overview' },
@@ -36,6 +76,18 @@ const webCategories = [
   'Education',
   'Chat / Dating',
 ];
+
+const WEB_CATEGORY_KEYS: Record<string, string> = {
+  'Adult Content': 'adult_content',
+  Gambling: 'gambling',
+  'Drugs & Alcohol': 'drugs_alcohol',
+  Violence: 'violence',
+  Gaming: 'gaming',
+  'Social Media': 'social_media',
+  News: 'news',
+  Education: 'education',
+  'Chat / Dating': 'chat_dating',
+};
 
 const weekDays = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
@@ -62,6 +114,18 @@ function minutesLabel(minutes: number) {
   const rest = minutes % 60;
   if (!hours) return `${rest}m`;
   return rest ? `${hours}h ${rest}m` : `${hours}h`;
+}
+
+function toTimeString(hour: number, minute: number): string {
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function parseTimeString(value: string): { hour: number; minute: number } {
+  const [h, m] = value.split(':').map(Number);
+  return {
+    hour: Number.isFinite(h) ? h : 21,
+    minute: Number.isFinite(m) ? m : 0,
+  };
 }
 
 function EmptyState({ children }: { children: string }) {
@@ -92,14 +156,137 @@ function Toggle({
   );
 }
 
+function parseUsageSummaries(auditEntries: AnyRecord[]): KidsUsageSummary[] {
+  const summaries: KidsUsageSummary[] = [];
+  for (const entry of auditEntries) {
+    if (entry.action !== 'kids.usage_reported') continue;
+    const items: AnyRecord[] = entry.details?.summaries ?? [];
+    for (const item of items) {
+      if (typeof item.packageName === 'string' && typeof item.usageSeconds === 'number') {
+        summaries.push({
+          packageName: item.packageName,
+          dateKey: String(item.dateKey ?? entry.details?.dateKey ?? ''),
+          usageSeconds: Number(item.usageSeconds),
+        });
+      }
+    }
+  }
+  return summaries;
+}
+
+function parseBlockedEvents(auditEntries: AnyRecord[]): KidsBlockedEvent[] {
+  const events: KidsBlockedEvent[] = [];
+  for (const entry of auditEntries) {
+    if (entry.action !== 'kids.blocked_events_reported') continue;
+    const items: AnyRecord[] = entry.details?.events ?? [];
+    for (const item of items) {
+      if (typeof item.packageName === 'string') {
+        events.push({
+          packageName: item.packageName,
+          reason: String(item.reason ?? 'BLOCK_APP'),
+          message: String(item.message ?? ''),
+          occurredAtEpochMillis: Number(item.occurredAtEpochMillis ?? 0),
+          reportedAt: String(entry.createdAt ?? ''),
+        });
+      }
+    }
+  }
+  return events.sort((a, b) => b.occurredAtEpochMillis - a.occurredAtEpochMillis);
+}
+
+function parseLatestHeartbeat(auditEntries: AnyRecord[]): KidsHeartbeat | null {
+  const latest = auditEntries
+    .filter((entry) => entry.action === 'kids.heartbeat')
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+
+  if (!latest?.details) return null;
+
+  return {
+    policyVersion: latest.details.policyVersion ?? null,
+    batteryLevelPercent: latest.details.batteryLevelPercent ?? null,
+    managementMode: latest.details.managementMode ?? null,
+    permissions: latest.details.permissions ?? null,
+    lastSyncEpochMillis: latest.details.lastSyncEpochMillis ?? null,
+    receivedAt: String(latest.createdAt ?? ''),
+  };
+}
+
+function buildWeeklyUsageBars(
+  summaries: KidsUsageSummary[],
+  dailyLimitMinutes: number,
+): Array<{ day: string; minutes: number; overLimit: boolean }> {
+  const byDate = new Map<string, number>();
+  for (const summary of summaries) {
+    byDate.set(summary.dateKey, (byDate.get(summary.dateKey) ?? 0) + summary.usageSeconds);
+  }
+
+  const result: Array<{ day: string; minutes: number; overLimit: boolean }> = [];
+  const now = new Date();
+  const dayLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+  for (let i = 6; i >= 0; i -= 1) {
+    const date = new Date(now);
+    date.setDate(date.getDate() - i);
+    const dateKey = date.toISOString().slice(0, 10);
+    const minutes = Math.round((byDate.get(dateKey) ?? 0) / 60);
+    result.push({
+      day: dayLabels[date.getDay()],
+      minutes,
+      overLimit: dailyLimitMinutes > 0 && minutes > dailyLimitMinutes,
+    });
+  }
+
+  return result;
+}
+
+function buildTopAppsByUsage(
+  summaries: KidsUsageSummary[],
+  limit = 5,
+): Array<{ packageName: string; totalSeconds: number; totalMinutes: number }> {
+  const byPackage = new Map<string, number>();
+  for (const summary of summaries) {
+    byPackage.set(summary.packageName, (byPackage.get(summary.packageName) ?? 0) + summary.usageSeconds);
+  }
+
+  return [...byPackage.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([packageName, totalSeconds]) => ({
+      packageName,
+      totalSeconds,
+      totalMinutes: Math.round(totalSeconds / 60),
+    }));
+}
+
+function todayDateKey(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function blockReasonLabel(reason: string): string {
+  switch (reason) {
+    case 'BLOCK_APP':
+      return 'App blocked';
+    case 'BLOCK_DAILY_LIMIT':
+      return 'Daily limit reached';
+    case 'BLOCK_BEDTIME':
+      return 'Bedtime active';
+    case 'BLOCK_REMOTE_LOCK':
+      return 'Device locked by parent';
+    default:
+      return 'Blocked';
+  }
+}
+
 export default function KidsControlCenter({
   profile,
   device,
   installation,
+  onRequestRefresh,
 }: {
   profile: AnyRecord;
   device: AnyRecord;
   installation: AnyRecord;
+  onRequestRefresh?: () => void;
 }) {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabId>('overview');
@@ -121,30 +308,82 @@ export default function KidsControlCenter({
     queryFn: async () => (await apiClient.get(`/apps/${installationId}/alerts`)).data,
     enabled: !!installationId,
   });
+  const { data: auditEntries = [], refetch: refetchAudit } = useQuery<AnyRecord[]>({
+    queryKey: ['app', installationId, 'audit'],
+    queryFn: async () => {
+      const response = await apiClient.get(`/apps/${installationId}/audit`);
+      return Array.isArray(response.data) ? response.data : (response.data?.items ?? []);
+    },
+    enabled: !!installationId,
+    refetchInterval: 60_000,
+  });
 
-  const dailyLimitMinutes = Number(entryValue(policy, 'screen_time.daily_limit')?.minutes ?? 120);
+  const dailyLimitMinutes = Number(entryValue(policy, 'kids.screen_time.daily_limit')?.minutes ?? 120);
   const [dailyLimitHours, setDailyLimitHours] = useState(Math.round(dailyLimitMinutes / 60));
-  const [bedtimeEnabled, setBedtimeEnabled] = useState(Boolean(entryValue(policy, 'bedtime.schedule')?.enabled ?? false));
+  const [bedtimeEnabled, setBedtimeEnabled] = useState(Boolean(entryValue(policy, 'kids.bedtime')?.enabled ?? false));
   const [bedtimeDays, setBedtimeDays] = useState<number[]>([0, 1, 2, 3, 4]);
-  const [blockedCategories, setBlockedCategories] = useState<Set<string>>(
-    new Set(['Adult Content', 'Gambling', 'Drugs & Alcohol', 'Violence', 'Chat / Dating']),
-  );
+  const [bedtimeStart, setBedtimeStart] = useState({ hour: 21, minute: 0 });
+  const [bedtimeWake, setBedtimeWake] = useState({ hour: 7, minute: 0 });
+  const [blockedCategories, setBlockedCategories] = useState<Set<string>>(new Set());
+  const [newPackage, setNewPackage] = useState('');
 
   useEffect(() => {
     setDailyLimitHours(Math.round(dailyLimitMinutes / 60));
   }, [dailyLimitMinutes]);
 
   useEffect(() => {
-    const bedtime = entryValue(policy, 'bedtime.schedule');
+    const bedtime = entryValue(policy, 'kids.bedtime');
     if (bedtime) {
       setBedtimeEnabled(Boolean(bedtime.enabled));
       if (Array.isArray(bedtime.days)) setBedtimeDays(bedtime.days);
+      if (bedtime.startHour !== undefined) {
+        setBedtimeStart({
+          hour: Number(bedtime.startHour),
+          minute: Number(bedtime.startMinute ?? 0),
+        });
+      }
+      if (bedtime.endHour !== undefined) {
+        setBedtimeWake({
+          hour: Number(bedtime.endHour),
+          minute: Number(bedtime.endMinute ?? 0),
+        });
+      }
     }
   }, [policy]);
 
+  useEffect(() => {
+    const webFilter = entryValue(policy, 'kids.web_filter');
+    if (webFilter?.categories) {
+      const blocked = new Set<string>();
+      for (const [displayName, key] of Object.entries(WEB_CATEGORY_KEYS)) {
+        if (webFilter.categories[key] === 'block') {
+          blocked.add(displayName);
+        }
+      }
+      setBlockedCategories(blocked);
+    } else {
+      setBlockedCategories(
+        new Set(['Adult Content', 'Gambling', 'Drugs & Alcohol', 'Violence', 'Chat / Dating']),
+      );
+    }
+  }, [policy]);
+
+  const bedtimeValue = (
+    enabled = bedtimeEnabled,
+    days = bedtimeDays,
+    start = bedtimeStart,
+    wake = bedtimeWake,
+  ) => ({
+    enabled,
+    startHour: start.hour,
+    startMinute: start.minute,
+    endHour: wake.hour,
+    endMinute: wake.minute,
+    days,
+  });
+
   const patchPolicyMutation = useMutation({
     mutationFn: async (entry: { key: string; value: AnyRecord; strength?: string }) =>
-      // TODO: Confirm Kids policy keys and values when the backend publishes the final schema for these controls.
       (await apiClient.patch(`/apps/${installationId}/policy`, {
         entries: [
           {
@@ -166,33 +405,168 @@ export default function KidsControlCenter({
 
   const syncMutation = useMutation({
     mutationFn: async () => (await apiClient.post(`/devices/${device.id}/sync`, {})).data,
-    onSuccess: () => toast.success('Sync requested.'),
+    onSuccess: () => {
+      toast.success('Sync requested. Policy update will arrive within 30 minutes.');
+      setTimeout(() => {
+        refetchAudit();
+        onRequestRefresh?.();
+      }, 5_000);
+    },
     onError: (error: AnyRecord) => {
-      if (error.response?.status === 404) {
-        // TODO: Remove this fallback once POST /devices/:deviceId/sync is available in every environment.
-        toast.success('Sync requested.');
-        return;
-      }
       toast.error(error.response?.data?.message || 'Failed to request sync');
     },
   });
 
-  const topApps = useMemo<AnyRecord[]>(() => activity?.topApps ?? activity?.apps ?? [], [activity]);
+  const lockMutation = useMutation({
+    mutationFn: async () =>
+      (await apiClient.post(`/devices/${device.id}/lockdown`, {})).data,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['app', installationId, 'effective-policy'] });
+      queryClient.invalidateQueries({ queryKey: ['profile', profile.id] });
+      toast.success('Device locked.');
+      setTimeout(() => onRequestRefresh?.(), 3_000);
+    },
+    onError: (error: AnyRecord) =>
+      toast.error(error.response?.data?.message || 'Failed to lock device'),
+  });
+
+  const unlockMutation = useMutation({
+    mutationFn: async () =>
+      (await apiClient.post(`/devices/${device.id}/unlock`, {})).data,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['app', installationId, 'effective-policy'] });
+      queryClient.invalidateQueries({ queryKey: ['profile', profile.id] });
+      toast.success('Device unlocked.');
+      setTimeout(() => onRequestRefresh?.(), 3_000);
+    },
+    onError: (error: AnyRecord) =>
+      toast.error(error.response?.data?.message || 'Failed to unlock device'),
+  });
+
+  const pauseMutation = useMutation({
+    mutationFn: async () =>
+      (await apiClient.post(`/profiles/${profile.id}/pause`, {})).data,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['profile', profile.id] });
+      toast.success('Profile paused.');
+    },
+    onError: (error: AnyRecord) =>
+      toast.error(error.response?.data?.message || 'Failed to pause profile'),
+  });
+
   const recentAlerts = useMemo<AnyRecord[]>(() => alerts.slice(0, 5), [alerts]);
-  const managedApps = useMemo<AnyRecord[]>(() => {
-    // TODO: Replace these fallbacks when GET /apps/:installationId/effective-policy exposes app inventory.
-    const rules = entryValue(policy, 'app_rules')?.apps;
-    return Array.isArray(rules) ? rules : [];
-  }, [policy]);
-  const filteredApps = managedApps.filter((app) =>
-    String(app.name || app.displayName || '').toLowerCase().includes(search.toLowerCase()),
+  const usageSummaries = useMemo(() => parseUsageSummaries(auditEntries), [auditEntries]);
+  const blockedEvents = useMemo(() => parseBlockedEvents(auditEntries), [auditEntries]);
+  const latestHeartbeat = useMemo(() => parseLatestHeartbeat(auditEntries), [auditEntries]);
+  const weeklyBars = useMemo(
+    () => buildWeeklyUsageBars(usageSummaries, dailyLimitMinutes),
+    [usageSummaries, dailyLimitMinutes],
   );
-  const usageMinutes = Number(activity?.today?.usedMinutes ?? activity?.usedMinutesToday ?? 0);
+  const topAppsByUsage = useMemo(
+    () => buildTopAppsByUsage(usageSummaries),
+    [usageSummaries],
+  );
+  const topAppsTodayByUsage = useMemo(
+    () => buildTopAppsByUsage(usageSummaries.filter((summary) => summary.dateKey === todayDateKey())),
+    [usageSummaries],
+  );
+  const todayBlocked = useMemo(() => {
+    const today = todayDateKey();
+    return blockedEvents.filter((event) => {
+      const date = new Date(event.occurredAtEpochMillis);
+      return date.toISOString().slice(0, 10) === today;
+    });
+  }, [blockedEvents]);
+  const recentBlocks = useMemo(() => blockedEvents.slice(0, 8), [blockedEvents]);
+  const weeklyBlockCount = useMemo(() => {
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    return blockedEvents.filter((event) => event.occurredAtEpochMillis >= sevenDaysAgo).length;
+  }, [blockedEvents]);
+  const weeklyTotalUsageMinutes = useMemo(() => {
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const cutoff = sevenDaysAgo.toISOString().slice(0, 10);
+    return Math.round(
+      usageSummaries
+        .filter((summary) => summary.dateKey >= cutoff)
+        .reduce((sum, summary) => sum + summary.usageSeconds, 0) / 60,
+    );
+  }, [usageSummaries]);
+  const blockedPackages = useMemo<string[]>(() => {
+    const blocklist = entryValue(policy, 'kids.blocklist');
+    return Array.isArray(blocklist?.packages) ? blocklist.packages : [];
+  }, [policy]);
+  const filteredPackages = blockedPackages.filter((pkg) =>
+    pkg.toLowerCase().includes(search.toLowerCase()),
+  );
+  const perAppLimits = useMemo<Array<{ packageName: string; limitMinutes: number }>>(() => {
+    const limits = entryValue(policy, 'kids.screen_time.per_app');
+    if (!limits || typeof limits !== 'object') return [];
+    return Object.entries(limits).map(([packageName, limitMinutes]) => ({
+      packageName,
+      limitMinutes: Number(limitMinutes ?? 0),
+    }));
+  }, [policy]);
+  const usageMinutes = useMemo(() => {
+    const today = todayDateKey();
+    const todaySeconds = usageSummaries
+      .filter((summary) => summary.dateKey === today)
+      .reduce((sum, summary) => sum + summary.usageSeconds, 0);
+    const fallback = Number(activity?.today?.usedMinutes ?? activity?.usedMinutesToday ?? 0);
+    const fromAudit = Math.round(todaySeconds / 60);
+    return fromAudit > 0 ? fromAudit : fallback;
+  }, [usageSummaries, activity]);
   const usagePercent = dailyLimitMinutes > 0 ? Math.min(100, Math.round((usageMinutes / dailyLimitMinutes) * 100)) : 0;
-  const weeklyUsage = (activity?.weeklyUsage ?? []) as Array<{ day?: string; minutes?: number; overLimit?: boolean }>;
+  const todayStats = useMemo(() => {
+    const today = todayDateKey();
+    const todaySummaries = usageSummaries.filter((summary) => summary.dateKey === today);
+    const uniquePackagesToday = new Set(todaySummaries.map((summary) => summary.packageName));
+
+    return {
+      appsOpened: uniquePackagesToday.size,
+      appsBlocked: todayBlocked.length,
+      sitesBlocked: 0,
+      alertsToday: alerts.filter((alert: AnyRecord) => {
+        const date = new Date(alert.sentAt || alert.createdAt || 0);
+        return date.toISOString().slice(0, 10) === today;
+      }).length,
+    };
+  }, [usageSummaries, todayBlocked, alerts]);
+  const deviceHealthItems = useMemo<DeviceHealthItem[]>(() => [
+    {
+      label: 'Device Admin',
+      active: device.adminActive === true || latestHeartbeat?.permissions?.deviceAdmin === true,
+      Icon: ShieldCheck,
+    },
+    {
+      label: 'Usage Access',
+      active: latestHeartbeat?.permissions?.usageAccess === true,
+      Icon: Activity,
+    },
+    {
+      label: 'Accessibility',
+      active: latestHeartbeat?.permissions?.accessibilityFallback === true,
+      Icon: Accessibility,
+    },
+    {
+      label: 'Battery exempt',
+      active: latestHeartbeat?.permissions?.batteryOptimizationIgnored === true,
+      Icon: Battery,
+    },
+  ], [device.adminActive, latestHeartbeat]);
+  const deviceAdminConfirmedInactive =
+    device.adminActive === false && latestHeartbeat?.permissions?.deviceAdmin === false;
 
   const patchBooleanRule = (key: string, enabled: boolean) => {
     patchPolicyMutation.mutate({ key, value: { enabled } });
+  };
+
+  const patchBlocklist = (packages: string[]) => {
+    patchPolicyMutation.mutate({
+      key: 'kids.blocklist',
+      value: { packages },
+      strength: 'hard',
+    });
   };
 
   return (
@@ -206,28 +580,62 @@ export default function KidsControlCenter({
             <div>
               <h2 className="text-lg font-semibold text-slate-100">{profile.name}'s Device</h2>
               <p className="mt-1 text-xs text-slate-400">{deviceName(device)} . GuardHub Kids . {device.platform || device.type || 'Android'}</p>
-              <p className="mt-1 text-xs text-emerald-400">
-                Online . {device.lastSeen ? `Last seen ${new Date(device.lastSeen).toLocaleString()}` : 'No recent activity'}
+              <p className="mt-1 flex items-center gap-2 text-xs">
+                {device.lockdownActive ? (
+                  <span className="flex items-center gap-1 text-rose-400">
+                    <span className="inline-block h-2 w-2 rounded-full bg-rose-400" />
+                    Locked
+                  </span>
+                ) : device.lastSeen ? (
+                  <span className="flex items-center gap-1 text-emerald-400">
+                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-400" />
+                    Online · Last seen {new Date(device.lastSeen).toLocaleString()}
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1 text-slate-500">
+                    <span className="inline-block h-2 w-2 rounded-full bg-slate-500" />
+                    Not yet seen
+                  </span>
+                )}
+                {device.adminActive && (
+                  <span className="rounded-full bg-brand-500/10 px-2 py-0.5 text-[10px] font-medium text-brand-400">
+                    Admin active
+                  </span>
+                )}
               </p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2 lg:ml-auto">
             <button
               type="button"
-              onClick={() => patchBooleanRule('control.pause', true)}
-              className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800/60"
+              onClick={() => pauseMutation.mutate()}
+              disabled={pauseMutation.isPending}
+              className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800/60 disabled:opacity-50"
             >
               <Pause className="h-4 w-4" />
               Pause
             </button>
-            <button
-              type="button"
-              onClick={() => patchBooleanRule('control.lockdown', true)}
-              className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800/60"
-            >
-              <Lock className="h-4 w-4" />
-              Lock
-            </button>
+            {device.lockdownActive ? (
+              <button
+                type="button"
+                onClick={() => unlockMutation.mutate()}
+                disabled={unlockMutation.isPending}
+                className="inline-flex items-center gap-2 rounded-lg border border-accent-teal/30 bg-accent-teal/10 px-3 py-2 text-sm font-medium text-accent-teal hover:bg-accent-teal/20 disabled:opacity-50"
+              >
+                <Lock className="h-4 w-4" />
+                Unlock
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => lockMutation.mutate()}
+                disabled={lockMutation.isPending}
+                className="inline-flex items-center gap-2 rounded-lg border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-sm font-medium text-rose-400 hover:bg-rose-400/20 disabled:opacity-50"
+              >
+                <Lock className="h-4 w-4" />
+                Lock Now
+              </button>
+            )}
             <button
               type="button"
               onClick={() => syncMutation.mutate()}
@@ -267,35 +675,111 @@ export default function KidsControlCenter({
               <div className="h-full rounded-full bg-brand-500" style={{ width: `${usagePercent}%` }} />
             </div>
           </section>
+          <section className="glass-panel p-5">
+            <h3 className="mb-3 text-sm font-semibold text-slate-100">Device protection status</h3>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {deviceHealthItems.map(({ label, active, Icon }) => (
+                <div
+                  key={label}
+                  className={`flex flex-col items-center gap-1 rounded-lg border px-3 py-3 text-center ${
+                    active
+                      ? 'border-accent-teal/20 bg-accent-teal/5'
+                      : 'border-rose-400/20 bg-rose-400/5'
+                  }`}
+                >
+                  <Icon className={`h-4 w-4 ${active ? 'text-accent-teal' : 'text-rose-400'}`} />
+                  <span className={`text-[10px] font-semibold ${active ? 'text-accent-teal' : 'text-rose-400'}`}>
+                    {active ? 'Active' : 'Inactive'}
+                  </span>
+                  <span className="text-[10px] text-slate-500">{label}</span>
+                </div>
+              ))}
+            </div>
+            {latestHeartbeat ? (
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                {latestHeartbeat.policyVersion !== null && (
+                  <span>Policy v{latestHeartbeat.policyVersion}</span>
+                )}
+                {latestHeartbeat.batteryLevelPercent !== null && (
+                  <span>Battery {latestHeartbeat.batteryLevelPercent}%</span>
+                )}
+                {latestHeartbeat.managementMode && (
+                  <span className="rounded-full bg-brand-500/10 px-2 py-0.5 text-brand-400">
+                    {latestHeartbeat.managementMode === 'device_admin' ? 'Device Admin' : 'Basic mode'}
+                  </span>
+                )}
+                <span className="ml-auto">Last seen {new Date(latestHeartbeat.receivedAt).toLocaleString()}</span>
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-slate-500">
+                Waiting for first heartbeat. The device reports every 30 minutes.
+              </p>
+            )}
+          </section>
+          {deviceAdminConfirmedInactive ? (
+            <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 px-4 py-3 text-xs text-amber-400">
+              Device Admin is not active. Remote lock and bedtime enforcement are unavailable
+              until the child re-enables it on their device.
+            </div>
+          ) : null}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[
-              ['Apps Opened', activity?.stats?.appsOpened ?? 0],
-              ['Apps Blocked', activity?.stats?.appsBlocked ?? 0],
-              ['Sites Blocked', activity?.stats?.sitesBlocked ?? 0],
-              ['Alerts Today', recentAlerts.length],
-            ].map(([label, value]) => (
-              <div key={String(label)} className="glass-panel p-4">
-                <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
-                <div className="mt-2 text-2xl font-bold text-slate-100">{value}</div>
+              ['Apps Opened', todayStats.appsOpened, 'text-accent-teal'],
+              ['Apps Blocked', todayStats.appsBlocked, 'text-rose-400'],
+              ['Sites Blocked', todayStats.sitesBlocked, 'text-rose-400'],
+              ['Alerts Today', todayStats.alertsToday, 'text-amber-400'],
+            ].map(([label, value, colour]) => (
+              <div key={String(label)} className="rounded-lg border border-white/10 bg-slate-900/40 px-3 py-3">
+                <div className={`text-xl font-bold ${colour}`}>{value}</div>
+                <div className="mt-1 text-xs text-slate-500">{label}</div>
               </div>
             ))}
           </div>
+          <section className="glass-panel p-5">
+            <h3 className="text-sm font-semibold text-slate-100">Recent blocks today</h3>
+            <div className="mt-3 space-y-2">
+              {todayBlocked.length > 0 ? (
+                todayBlocked.slice(0, 5).map((event, index) => (
+                  <div
+                    key={`${event.packageName}-${event.occurredAtEpochMillis}-${index}`}
+                    className="flex items-center gap-3 rounded-lg border border-rose-400/10 bg-rose-400/5 px-3 py-2"
+                  >
+                    <span className="rounded-full bg-rose-400/10 px-2 py-0.5 text-[10px] font-semibold text-rose-400">
+                      {blockReasonLabel(event.reason)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs text-slate-300">
+                      {event.packageName}
+                    </span>
+                    <span className="shrink-0 text-xs text-slate-500">
+                      {new Date(event.occurredAtEpochMillis).toLocaleTimeString()}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-slate-500">No blocks recorded today.</p>
+              )}
+            </div>
+          </section>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <section className="glass-panel p-5">
               <h3 className="text-sm font-semibold text-slate-100">Top Apps Today</h3>
               <div className="mt-4 space-y-3">
-                {topApps.length ? topApps.slice(0, 5).map((app) => (
-                  <div key={app.id || app.name} className="flex items-center gap-3">
-                    <Smartphone className="h-4 w-4 text-brand-400" />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm text-slate-100">{app.name || app.displayName || 'App'}</div>
-                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/10">
-                        <div className="h-full bg-brand-400" style={{ width: `${Math.min(100, app.percent ?? 35)}%` }} />
+                {topAppsTodayByUsage.length ? topAppsTodayByUsage.map((app) => {
+                  const maxMinutes = Math.max(topAppsTodayByUsage[0]?.totalMinutes ?? 0, 1);
+                  const widthPct = Math.round((app.totalMinutes / maxMinutes) * 100);
+                  return (
+                    <div key={app.packageName} className="flex items-center gap-3">
+                      <Smartphone className="h-4 w-4 text-brand-400" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-mono text-sm text-slate-100">{app.packageName}</div>
+                        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/10">
+                          <div className="h-full bg-brand-400" style={{ width: `${widthPct}%` }} />
+                        </div>
                       </div>
+                      <span className="text-xs text-slate-400">{minutesLabel(app.totalMinutes)}</span>
                     </div>
-                    <span className="text-xs text-slate-400">{minutesLabel(Number(app.minutes ?? 0))}</span>
-                  </div>
-                )) : <EmptyState>No app usage reported today.</EmptyState>}
+                  );
+                }) : <EmptyState>No app usage reported today.</EmptyState>}
               </div>
             </section>
             <section className="glass-panel p-5">
@@ -330,7 +814,7 @@ export default function KidsControlCenter({
               step={1}
               value={dailyLimitHours}
               onChange={(event) => setDailyLimitHours(Number(event.target.value))}
-              onMouseUp={() => patchPolicyMutation.mutate({ key: 'screen_time.daily_limit', value: { enabled: dailyLimitHours > 0, minutes: dailyLimitHours * 60 } })}
+              onMouseUp={() => patchPolicyMutation.mutate({ key: 'kids.screen_time.daily_limit', value: { enabled: dailyLimitHours > 0, minutes: dailyLimitHours * 60 }, strength: 'soft' })}
               className="mt-5 w-full accent-brand-500"
             />
           </section>
@@ -343,7 +827,10 @@ export default function KidsControlCenter({
                     <div className="text-sm text-slate-100">{name}</div>
                     <div className="text-xs text-slate-500">Weekdays</div>
                   </div>
-                  <Toggle checked={false} onChange={(enabled) => patchBooleanRule(`scheduled_blocks.${name.toLowerCase().replace(/\s/g, '_')}`, enabled)} />
+                  <Toggle
+                    checked={false}
+                    onChange={(enabled) => patchBooleanRule('kids.screen_time.scheduled_blocks', enabled)}
+                  />
                 </div>
               ))}
               <button type="button" className="rounded-lg border border-brand-500/20 px-3 py-2 text-sm text-brand-400 hover:bg-brand-500/10">
@@ -354,12 +841,12 @@ export default function KidsControlCenter({
           <section className="glass-panel p-5 lg:col-span-2">
             <h3 className="text-sm font-semibold text-slate-100">Per-App Time Limits</h3>
             <div className="mt-4">
-              {managedApps.length ? managedApps.map((app) => (
-                <div key={app.id || app.name} className="mb-2 flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-3">
+              {perAppLimits.length ? perAppLimits.map((app) => (
+                <div key={app.packageName} className="mb-2 flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-3">
                   <Smartphone className="h-4 w-4 text-brand-400" />
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm text-slate-100">{app.name || app.displayName}</div>
-                    <div className="text-xs text-slate-500">{app.category || 'App'}</div>
+                    <div className="font-mono text-sm text-slate-100">{app.packageName}</div>
+                    <div className="text-xs text-slate-500">Daily app limit</div>
                   </div>
                   <span className="rounded-full bg-brand-500/10 px-2.5 py-1 text-xs font-medium text-brand-400">
                     {minutesLabel(Number(app.limitMinutes ?? 0))}
@@ -373,36 +860,80 @@ export default function KidsControlCenter({
 
       {activeTab === 'apps' ? (
         <section className="glass-panel p-5">
-          <div className="relative">
+          <div className="mb-5">
+            <h3 className="mb-3 text-sm font-semibold text-slate-100">Block an app</h3>
+            <div className="flex gap-2">
+              <input
+                value={newPackage}
+                onChange={(event) => setNewPackage(event.target.value.trim())}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && newPackage && !blockedPackages.includes(newPackage)) {
+                    patchBlocklist([...blockedPackages, newPackage]);
+                    setNewPackage('');
+                  }
+                }}
+                placeholder="com.example.app"
+                className="min-w-0 flex-1 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2.5 font-mono text-sm text-slate-100 outline-none focus:border-brand-500"
+              />
+              <button
+                type="button"
+                disabled={!newPackage || blockedPackages.includes(newPackage) || patchPolicyMutation.isPending}
+                onClick={() => {
+                  if (newPackage && !blockedPackages.includes(newPackage)) {
+                    patchBlocklist([...blockedPackages, newPackage]);
+                    setNewPackage('');
+                  }
+                }}
+                className="rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-500 disabled:opacity-40"
+              >
+                Block
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-slate-500">
+              Enter the Android package name, e.g. <span className="font-mono text-slate-400">com.tiktok.android</span>
+            </p>
+          </div>
+
+          <div className="relative mb-4">
             <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-500" />
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search apps"
+              placeholder="Search blocked apps"
               className="w-full rounded-lg border border-white/10 bg-slate-900/40 px-9 py-2.5 text-sm text-slate-100 outline-none focus:border-brand-500"
             />
           </div>
-          <div className="mt-4">
-            {filteredApps.length ? filteredApps.map((app) => {
-              const allowed = app.allowed !== false;
-              return (
-                <div key={app.id || app.name} className="mb-2 flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-3">
-                  <Smartphone className="h-4 w-4 text-brand-400" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm text-slate-100">{app.name || app.displayName}</div>
-                    <div className="text-xs text-slate-500">{app.category || 'App'}</div>
-                  </div>
-                  <span className="rounded-full bg-brand-500/10 px-2.5 py-1 text-xs text-brand-400">
-                    {minutesLabel(Number(app.limitMinutes ?? 0))}
+
+          {filteredPackages.length ? (
+            <div className="space-y-2">
+              {filteredPackages.map((pkg) => (
+                <div
+                  key={pkg}
+                  className="flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-3"
+                >
+                  <Smartphone className="h-4 w-4 shrink-0 text-rose-400" />
+                  <span className="min-w-0 flex-1 font-mono text-sm text-slate-100">{pkg}</span>
+                  <span className="rounded-full bg-rose-400/10 px-2.5 py-1 text-xs font-semibold text-rose-400">
+                    Blocked
                   </span>
-                  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${allowed ? 'bg-accent-teal/10 text-accent-teal' : 'bg-rose-400/10 text-rose-400'}`}>
-                    {allowed ? 'Allowed' : 'Blocked'}
-                  </span>
-                  <Toggle checked={allowed} onChange={(enabled) => patchPolicyMutation.mutate({ key: `app_rules.${app.id || app.name}`, value: { allowed: enabled } })} />
+                  <button
+                    type="button"
+                    onClick={() => patchBlocklist(blockedPackages.filter((item) => item !== pkg))}
+                    disabled={patchPolicyMutation.isPending}
+                    className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-rose-400/10 hover:text-rose-400 disabled:opacity-40"
+                  >
+                    Remove
+                  </button>
                 </div>
-              );
-            }) : <EmptyState>No manageable app inventory returned for this installation.</EmptyState>}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState>
+              {blockedPackages.length === 0
+                ? 'No apps blocked yet. Enter a package name above to block an app.'
+                : 'No blocked apps match your search.'}
+            </EmptyState>
+          )}
         </section>
       ) : null}
 
@@ -419,7 +950,15 @@ export default function KidsControlCenter({
                   if (blocked) next.delete(category);
                   else next.add(category);
                   setBlockedCategories(next);
-                  patchPolicyMutation.mutate({ key: `web_filter.${category.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`, value: { blocked: !blocked } });
+                  const categories: Record<string, 'block' | 'allow'> = {};
+                  for (const [displayName, key] of Object.entries(WEB_CATEGORY_KEYS)) {
+                    categories[key] = next.has(displayName) ? 'block' : 'allow';
+                  }
+                  patchPolicyMutation.mutate({
+                    key: 'kids.web_filter',
+                    value: { categories },
+                    strength: 'hard',
+                  });
                 }}
                 className={`flex items-center gap-3 rounded-xl border px-4 py-4 text-left transition-colors ${
                   blocked ? 'border-rose-400/30 bg-rose-400/5' : 'border-accent-teal/30 bg-accent-teal/5'
@@ -447,13 +986,51 @@ export default function KidsControlCenter({
               checked={bedtimeEnabled}
               onChange={(enabled) => {
                 setBedtimeEnabled(enabled);
-                patchPolicyMutation.mutate({ key: 'bedtime.schedule', value: { enabled, days: bedtimeDays } });
+                patchPolicyMutation.mutate({
+                  key: 'kids.bedtime',
+                  value: bedtimeValue(enabled),
+                  strength: 'hard',
+                });
               }}
             />
           </div>
           <div className="mt-5 grid grid-cols-2 gap-3">
-            <input type="time" disabled={!bedtimeEnabled} defaultValue="21:00" className="rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2 text-slate-100 disabled:opacity-40" />
-            <input type="time" disabled={!bedtimeEnabled} defaultValue="07:00" className="rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2 text-slate-100 disabled:opacity-40" />
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-slate-500">Bedtime start</label>
+              <input
+                type="time"
+                disabled={!bedtimeEnabled}
+                value={toTimeString(bedtimeStart.hour, bedtimeStart.minute)}
+                onChange={(event) => {
+                  const next = parseTimeString(event.target.value);
+                  setBedtimeStart(next);
+                  patchPolicyMutation.mutate({
+                    key: 'kids.bedtime',
+                    value: bedtimeValue(bedtimeEnabled, bedtimeDays, next, bedtimeWake),
+                    strength: 'hard',
+                  });
+                }}
+                className="rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2 text-slate-100 disabled:opacity-40"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-slate-500">Wake time</label>
+              <input
+                type="time"
+                disabled={!bedtimeEnabled}
+                value={toTimeString(bedtimeWake.hour, bedtimeWake.minute)}
+                onChange={(event) => {
+                  const next = parseTimeString(event.target.value);
+                  setBedtimeWake(next);
+                  patchPolicyMutation.mutate({
+                    key: 'kids.bedtime',
+                    value: bedtimeValue(bedtimeEnabled, bedtimeDays, bedtimeStart, next),
+                    strength: 'hard',
+                  });
+                }}
+                className="rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2 text-slate-100 disabled:opacity-40"
+              />
+            </div>
           </div>
           <div className="mt-5 flex flex-wrap gap-2">
             {weekDays.map((day, index) => (
@@ -466,7 +1043,11 @@ export default function KidsControlCenter({
                     ? bedtimeDays.filter((item) => item !== index)
                     : [...bedtimeDays, index];
                   setBedtimeDays(next);
-                  patchPolicyMutation.mutate({ key: 'bedtime.schedule', value: { enabled: bedtimeEnabled, days: next } });
+                  patchPolicyMutation.mutate({
+                    key: 'kids.bedtime',
+                    value: bedtimeValue(bedtimeEnabled, next),
+                    strength: 'hard',
+                  });
                 }}
                 className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs font-semibold ${
                   bedtimeDays.includes(index) ? 'border-brand-500 bg-brand-600 text-white' : 'border-white/10 text-slate-500'
@@ -485,52 +1066,147 @@ export default function KidsControlCenter({
       {activeTab === 'reports' ? (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <section className="glass-panel p-5">
-            <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-              <BarChart3 className="h-4 w-4 text-brand-400" />
-              Weekly Usage
-            </h3>
-            <div className="mt-5 flex h-32 items-end gap-2">
-              {(weeklyUsage.length ? weeklyUsage : weekDays.map((day) => ({ day, minutes: 0, overLimit: false }))).slice(0, 7).map((day, index) => (
-                <div key={`${day.day}-${index}`} className="flex flex-1 flex-col items-center gap-2">
-                  <div
-                    className={`w-full rounded-t ${day.overLimit ? 'bg-rose-400' : 'bg-brand-400'}`}
-                    style={{ height: `${Math.max(8, Math.min(100, Number(day.minutes ?? 0) / 4))}%` }}
-                  />
-                  <span className="text-xs text-slate-500">{day.day || weekDays[index]}</span>
-                </div>
-              ))}
+            <div className="flex items-center justify-between">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+                <BarChart3 className="h-4 w-4 text-brand-400" />
+                Weekly usage
+              </h3>
+              {weeklyTotalUsageMinutes > 0 && (
+                <span className="text-xs text-slate-500">
+                  Avg: {minutesLabel(Math.round(weeklyTotalUsageMinutes / 7))}/day
+                </span>
+              )}
             </div>
+            {weeklyBars.some((bar) => bar.minutes > 0) ? (
+              <>
+                <div className="mt-5 flex h-32 items-end gap-2">
+                  {weeklyBars.map((bar, index) => {
+                    const maxMinutes = Math.max(...weeklyBars.map((item) => item.minutes), dailyLimitMinutes, 1);
+                    const heightPct = Math.max(4, Math.round((bar.minutes / maxMinutes) * 100));
+                    return (
+                      <div key={`${bar.day}-${index}`} className="flex flex-1 flex-col items-center gap-1">
+                        <span className="text-[10px] text-slate-500">
+                          {bar.minutes > 0 ? minutesLabel(bar.minutes) : ''}
+                        </span>
+                        <div
+                          title={`${bar.day}: ${minutesLabel(bar.minutes)}`}
+                          className={`w-full rounded-t transition-all ${
+                            bar.overLimit ? 'bg-rose-400' : 'bg-brand-400/70 hover:bg-brand-400'
+                          }`}
+                          style={{ height: `${heightPct}%` }}
+                        />
+                        <span className="text-xs text-slate-500">{bar.day}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {dailyLimitMinutes > 0 && (
+                  <p className="mt-2 text-xs text-slate-500">
+                    Daily limit: {minutesLabel(dailyLimitMinutes)} ·{' '}
+                    <span className="text-rose-400">
+                      {weeklyBars.filter((bar) => bar.overLimit).length} day(s) exceeded
+                    </span>
+                  </p>
+                )}
+              </>
+            ) : (
+              <EmptyState>
+                No usage data yet. Usage reports appear here once the device syncs.
+              </EmptyState>
+            )}
           </section>
           <section className="glass-panel p-5">
             <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-100">
               <Clock className="h-4 w-4 text-brand-400" />
-              Weekly Events
+              Weekly events
             </h3>
             <div className="mt-4 grid grid-cols-2 gap-3">
               {[
-                ['Content blocked', activity?.weeklyEvents?.contentBlocked ?? 0],
-                ['Limit reached days', activity?.weeklyEvents?.limitReachedDays ?? 0],
-                ['App blocks', activity?.weeklyEvents?.appBlocks ?? 0],
-                ['Policy syncs', activity?.weeklyEvents?.policySyncs ?? 0],
-              ].map(([label, value]) => (
+                { label: 'App blocks', value: weeklyBlockCount, colour: 'text-rose-400' },
+                {
+                  label: 'Limit reached days',
+                  value: weeklyBars.filter((bar) => bar.overLimit).length,
+                  colour: 'text-amber-400',
+                },
+                {
+                  label: 'Usage reports',
+                  value: auditEntries.filter((entry) => entry.action === 'kids.usage_reported').length,
+                  colour: 'text-brand-400',
+                },
+                {
+                  label: 'Heartbeats (7d)',
+                  value: auditEntries.filter(
+                    (entry) =>
+                      entry.action === 'kids.heartbeat' &&
+                      new Date(entry.createdAt).getTime() >= Date.now() - 7 * 86_400_000,
+                  ).length,
+                  colour: 'text-accent-teal',
+                },
+              ].map(({ label, value, colour }) => (
                 <div key={String(label)} className="rounded-lg border border-white/10 bg-slate-900/40 px-3 py-3">
-                  <div className="text-xl font-bold text-slate-100">{value}</div>
+                  <div className={`text-xl font-bold ${colour}`}>{value}</div>
                   <div className="mt-1 text-xs text-slate-500">{label}</div>
                 </div>
               ))}
             </div>
           </section>
           <section className="glass-panel p-5 lg:col-span-2">
-            <h3 className="text-sm font-semibold text-slate-100">Most Used Apps This Week</h3>
-            <div className="mt-4">
-              {topApps.length ? topApps.slice(0, 6).map((app) => (
-                <div key={app.id || app.name} className="mb-2 flex items-center justify-between rounded-lg border border-white/10 bg-slate-900/40 px-3 py-3">
-                  <span className="text-sm text-slate-100">{app.name || app.displayName || 'App'}</span>
-                  <span className="text-xs text-slate-400">{minutesLabel(Number(app.weeklyMinutes ?? app.minutes ?? 0))}</span>
-                </div>
-              )) : <EmptyState>No weekly app usage has been reported.</EmptyState>}
-            </div>
+            <h3 className="text-sm font-semibold text-slate-100">Most used apps this week</h3>
+            {topAppsByUsage.length ? (
+              <div className="mt-4 space-y-3">
+                {topAppsByUsage.map((app) => {
+                  const maxMinutes = Math.max(topAppsByUsage[0]?.totalMinutes ?? 0, 1);
+                  const widthPct = Math.round((app.totalMinutes / maxMinutes) * 100);
+                  return (
+                    <div key={app.packageName} className="flex items-center gap-3">
+                      <Smartphone className="h-4 w-4 shrink-0 text-slate-500" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2 text-sm">
+                          <span className="truncate font-mono text-slate-200">{app.packageName}</span>
+                          <span className="shrink-0 text-xs text-brand-400">
+                            {minutesLabel(app.totalMinutes)}
+                          </span>
+                        </div>
+                        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/10">
+                          <div
+                            className="h-full rounded-full bg-brand-500/60"
+                            style={{ width: `${widthPct}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <EmptyState>
+                No app usage data yet. Usage appears here after the device syncs.
+              </EmptyState>
+            )}
           </section>
+          {recentBlocks.length > 0 ? (
+            <section className="glass-panel p-5 lg:col-span-2">
+              <h3 className="text-sm font-semibold text-slate-100">Recent blocks (all time)</h3>
+              <div className="mt-4 space-y-2">
+                {recentBlocks.map((event, index) => (
+                  <div
+                    key={`${event.packageName}-${event.occurredAtEpochMillis}-${index}`}
+                    className="flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2.5"
+                  >
+                    <span className="rounded-full bg-rose-400/10 px-2 py-0.5 text-[10px] font-semibold text-rose-400">
+                      {blockReasonLabel(event.reason)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs text-slate-300">
+                      {event.packageName}
+                    </span>
+                    <span className="shrink-0 text-xs text-slate-500">
+                      {new Date(event.occurredAtEpochMillis).toLocaleString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
         </div>
       ) : null}
     </div>

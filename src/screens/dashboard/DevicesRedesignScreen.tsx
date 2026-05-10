@@ -400,6 +400,15 @@ export default function DevicesRedesignScreen() {
     queryKey: ['profile', selectedProfileId],
     queryFn: async () => (await apiClient.get(`/profiles/${selectedProfileId}`)).data,
     enabled: !!selectedProfileId,
+    refetchInterval: view.mode === 'kids-control' ? 30_000 : false,
+  });
+
+  const { data: liveDevice } = useQuery<AnyRecord>({
+    queryKey: ['device', view.mode === 'kids-control' ? view.deviceId : null],
+    queryFn: async () =>
+      (await apiClient.get(`/devices/${view.mode === 'kids-control' ? view.deviceId : ''}`)).data,
+    enabled: view.mode === 'kids-control' && !!view.deviceId,
+    refetchInterval: 30_000,
   });
 
   const totalDevices = useMemo(
@@ -481,6 +490,7 @@ export default function DevicesRedesignScreen() {
           return view.mode === 'kids-control' ? slug.includes('guardhub-kids') : slug.includes('guardscreen');
         })
       : null;
+  const deviceForKids = view.mode === 'kids-control' ? (liveDevice ?? selectedDevice) : selectedDevice;
 
   const openAppView = (device: AnyRecord, installation: AnyRecord) => {
     if (!selectedProfile) return;
@@ -753,8 +763,17 @@ export default function DevicesRedesignScreen() {
               { label: `${view.deviceName} (GuardHub Kids)` },
             ]}
           />
-          {selectedDevice && selectedInstallation ? (
-            <KidsControlCenter profile={selectedProfile} device={selectedDevice} installation={selectedInstallation} />
+          {deviceForKids && selectedInstallation ? (
+            <KidsControlCenter
+              profile={selectedProfile}
+              device={deviceForKids}
+              installation={selectedInstallation}
+              onRequestRefresh={() => {
+                queryClient.invalidateQueries({ queryKey: ['profile', selectedProfile.id] });
+                queryClient.invalidateQueries({ queryKey: ['profiles'] });
+                queryClient.invalidateQueries({ queryKey: ['device', view.deviceId] });
+              }}
+            />
           ) : (
             <MissingInstallation />
           )}
