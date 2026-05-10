@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, PauseCircle, PlayCircle, Plus, ShieldCheck, Users } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, PauseCircle, PlayCircle, Plus, ShieldCheck, Users, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { apiClient } from '../../api/client';
 import Breadcrumb from '../../components/Breadcrumb';
@@ -18,6 +18,22 @@ type ScreenView =
   | { mode: 'detail'; profileId: string }
   | { mode: 'kids-control'; profileId: string; deviceId: string; deviceName: string }
   | { mode: 'guardscreen'; profileId: string; deviceId: string; deviceName: string };
+type RemovalConfirmation =
+  | {
+      kind: 'device';
+      profileId: string;
+      deviceId: string;
+      title: string;
+      description: string;
+    }
+  | {
+      kind: 'app';
+      profileId: string;
+      deviceId: string;
+      installationId: string;
+      title: string;
+      description: string;
+    };
 
 type SubscriptionLimits = {
   plan: {
@@ -350,6 +366,71 @@ function MissingInstallation() {
   );
 }
 
+function RemoveConfirmationDialog({
+  confirmation,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  confirmation: RemovalConfirmation | null;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!confirmation) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 px-4 py-6 backdrop-blur-sm">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="remove-confirmation-title"
+        className="w-full max-w-md rounded-2xl border border-white/10 bg-slate-900 p-5 shadow-2xl shadow-black/40"
+      >
+        <div className="flex items-start gap-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-rose-400/20 bg-rose-400/10 text-rose-400">
+            <AlertTriangle className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 id="remove-confirmation-title" className="text-base font-semibold text-slate-100">
+              {confirmation.title}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-400">{confirmation.description}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={pending}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-white/10 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Close removal confirmation"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={pending}
+            className="rounded-lg border border-white/10 px-4 py-2.5 text-sm font-medium text-slate-300 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={pending}
+            className="rounded-lg bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {pending ? 'Removing...' : confirmation.kind === 'device' ? 'Remove Device' : 'Remove App'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DevicesRedesignScreen() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -357,6 +438,7 @@ export default function DevicesRedesignScreen() {
   const [profileForm, setProfileForm] = useState(emptyProfileForm);
   const [showProfileForm, setShowProfileForm] = useState(false);
   const [view, setView] = useState<ScreenView>({ mode: 'list' });
+  const [removalConfirmation, setRemovalConfirmation] = useState<RemovalConfirmation | null>(null);
   const selectedProfileId = view.mode === 'list' ? null : view.profileId;
 
   const { data: family, isLoading: familyLoading } = useQuery<Family>({
@@ -479,6 +561,7 @@ export default function DevicesRedesignScreen() {
     onSuccess: (response: AnyRecord, payload) => {
       refreshProfileData(payload.profileId);
       queryClient.removeQueries({ queryKey: ['device', payload.deviceId] });
+      setRemovalConfirmation(null);
       toast.success(response?.message || 'Device removed.');
     },
     onError: (error: AnyRecord) => toast.error(error.response?.data?.message || 'Failed to remove device'),
@@ -491,6 +574,7 @@ export default function DevicesRedesignScreen() {
       refreshProfileData(payload.profileId);
       queryClient.invalidateQueries({ queryKey: ['device', payload.deviceId] });
       queryClient.removeQueries({ queryKey: ['app', payload.installationId] });
+      setRemovalConfirmation(null);
       toast.success('App installation removed.');
     },
     onError: (error: AnyRecord) => toast.error(error.response?.data?.message || 'Failed to remove app installation'),
@@ -538,29 +622,50 @@ export default function DevicesRedesignScreen() {
   const handleRemoveDevice = (device: AnyRecord) => {
     if (!selectedProfile || !device.id) return;
     const name = getDeviceName(device);
-    const confirmed = window.confirm(
-      `Remove ${name}? This disconnects the device and all app installations under it.`,
-    );
-    if (!confirmed) return;
-    removeDeviceMutation.mutate({ profileId: selectedProfile.id, deviceId: device.id });
+    setRemovalConfirmation({
+      kind: 'device',
+      profileId: selectedProfile.id,
+      deviceId: device.id,
+      title: `Remove ${name}?`,
+      description: 'This disconnects the device and all app installations under it.',
+    });
   };
 
   const handleRemoveApp = (device: AnyRecord, installation: AnyRecord) => {
     if (!selectedProfile || !device.id || !installation.id) return;
     const appName = installation.appCatalog?.displayName || installation.displayName || 'this app installation';
     const lastApp = (device.appInstallations?.length ?? 0) <= 1;
-    const confirmed = window.confirm(
-      lastApp
-        ? `Remove ${appName}? This is the last app on ${getDeviceName(device)}, so the device will also be disconnected.`
-        : `Remove ${appName} from ${getDeviceName(device)}?`,
-    );
-    if (!confirmed) return;
-    removeAppMutation.mutate({
+    setRemovalConfirmation({
+      kind: 'app',
       profileId: selectedProfile.id,
       deviceId: device.id,
       installationId: installation.id,
+      title: `Remove ${appName}?`,
+      description: lastApp
+        ? `This is the last app on ${getDeviceName(device)}, so the device will also be disconnected.`
+        : `This removes ${appName} from ${getDeviceName(device)}.`,
     });
   };
+
+  const confirmRemoval = () => {
+    if (!removalConfirmation) return;
+
+    if (removalConfirmation.kind === 'device') {
+      removeDeviceMutation.mutate({
+        profileId: removalConfirmation.profileId,
+        deviceId: removalConfirmation.deviceId,
+      });
+      return;
+    }
+
+    removeAppMutation.mutate({
+      profileId: removalConfirmation.profileId,
+      deviceId: removalConfirmation.deviceId,
+      installationId: removalConfirmation.installationId,
+    });
+  };
+
+  const removalPending = removeDeviceMutation.isPending || removeAppMutation.isPending;
 
   if (familyLoading) {
     return (
@@ -867,6 +972,13 @@ export default function DevicesRedesignScreen() {
           )}
         </div>
       ) : null}
+
+      <RemoveConfirmationDialog
+        confirmation={removalConfirmation}
+        pending={removalPending}
+        onCancel={() => setRemovalConfirmation(null)}
+        onConfirm={confirmRemoval}
+      />
     </div>
   );
 }
