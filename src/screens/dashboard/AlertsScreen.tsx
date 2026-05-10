@@ -4,9 +4,44 @@ import { BellRing, Info, Smartphone, TriangleAlert } from 'lucide-react';
 import { apiClient } from '../../api/client';
 
 type AnyRecord = Record<string, any>;
+type AlertSourceFilter = 'all' | 'kids' | 'guardscreen';
+
+const kidsAlertTypes = ['kids_app_blocked', 'kids_limit_reached', 'kids_bedtime_violation'];
+
+function alertBadgeClass(alertType: string): string {
+  if (kidsAlertTypes.includes(alertType)) {
+    return 'bg-accent-teal/10 text-accent-teal border border-accent-teal/20';
+  }
+  if (['detection', 'uninstall_attempt'].includes(alertType)) {
+    return 'bg-rose-400/10 text-rose-400 border border-rose-400/20';
+  }
+  return 'bg-slate-700/50 text-slate-300 border border-white/10';
+}
+
+function alertTypeLabel(alertType: string): string {
+  switch (alertType) {
+    case 'kids_app_blocked':
+      return '🚫 App Blocked';
+    case 'kids_limit_reached':
+      return '⏱ Limit Reached';
+    case 'kids_bedtime_violation':
+      return '🌙 Bedtime';
+    case 'detection':
+      return '🛡 Detection';
+    case 'uninstall_attempt':
+      return '⚠ Uninstall Attempt';
+    case 'pin_failed':
+      return '🔑 PIN Failed';
+    case 'service_disabled':
+      return '⛔ Service Disabled';
+    default:
+      return alertType.replace(/_/g, ' ');
+  }
+}
 
 export default function AlertsScreen() {
   const [filter, setFilter] = useState('');
+  const [filterSource, setFilterSource] = useState<AlertSourceFilter>('all');
 
   const { data: alerts = [], isLoading } = useQuery<AnyRecord[]>({
     queryKey: ['alerts'],
@@ -14,14 +49,21 @@ export default function AlertsScreen() {
   });
 
   const filteredAlerts = useMemo(() => {
-    if (!filter.trim()) return alerts;
+    const sourceFiltered =
+      filterSource === 'kids'
+        ? alerts.filter((alert) => kidsAlertTypes.includes(alert.alertType))
+        : filterSource === 'guardscreen'
+          ? alerts.filter((alert) => !kidsAlertTypes.includes(alert.alertType))
+          : alerts;
+
+    if (!filter.trim()) return sourceFiltered;
     const needle = filter.trim().toLowerCase();
-    return alerts.filter((alert) =>
+    return sourceFiltered.filter((alert) =>
       [alert.message, alert.alertType, alert.device?.name, alert.device?.profile?.name]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(needle)),
     );
-  }, [alerts, filter]);
+  }, [alerts, filter, filterSource]);
 
   return (
     <div className="space-y-6">
@@ -38,6 +80,22 @@ export default function AlertsScreen() {
           placeholder="Filter by message, profile, device, or alert type"
           className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-dark-800 px-4 py-3 text-slate-900 dark:text-slate-100 outline-none focus:border-brand-500"
         />
+        <div className="mt-3 flex gap-2">
+          {(['all', 'kids', 'guardscreen'] as const).map((source) => (
+            <button
+              key={source}
+              type="button"
+              onClick={() => setFilterSource(source)}
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold capitalize transition-colors ${
+                filterSource === source
+                  ? 'bg-brand-600 text-white'
+                  : 'border border-white/10 text-slate-400 hover:bg-white/5'
+              }`}
+            >
+              {source === 'all' ? 'All alerts' : source === 'kids' ? '🧒 Kids' : '🛡 GuardScreen'}
+            </button>
+          ))}
+        </div>
       </div>
 
       {isLoading ? (
@@ -65,8 +123,15 @@ export default function AlertsScreen() {
                   </div>
                   <div>
                     <div className="font-semibold text-slate-900 dark:text-slate-100">{alert.message}</div>
-                    <div className="mt-1 text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                      {alert.alertType}
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${alertBadgeClass(alert.alertType)}`}>
+                        {alertTypeLabel(alert.alertType)}
+                      </span>
+                      {alert.source === 'kids' && (
+                        <span className="rounded-full bg-accent-teal/10 px-2 py-0.5 text-[10px] font-semibold text-accent-teal">
+                          Kids
+                        </span>
+                      )}
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500 dark:text-slate-400">
                       {alert.device?.profile?.name ? (
