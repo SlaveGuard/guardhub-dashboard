@@ -1,4 +1,4 @@
-import { ChevronRight, Shield, Smartphone } from 'lucide-react';
+import { ChevronRight, Shield, Smartphone, Trash2 } from 'lucide-react';
 
 type AnyRecord = Record<string, any>;
 
@@ -46,9 +46,17 @@ function appTone(slug: string) {
 export default function LinkedDeviceGroup({
   device,
   onOpenApp,
+  onRemoveDevice,
+  onRemoveApp,
+  removingDevice,
+  removingAppId,
 }: {
   device: AnyRecord;
   onOpenApp: (device: AnyRecord, installation: AnyRecord) => void;
+  onRemoveDevice: (device: AnyRecord) => void;
+  onRemoveApp: (device: AnyRecord, installation: AnyRecord) => void;
+  removingDevice?: boolean;
+  removingAppId?: string | null;
 }) {
   const online = isOnline(device);
   const installations = device.appInstallations ?? [];
@@ -68,14 +76,26 @@ export default function LinkedDeviceGroup({
             </div>
           </div>
         </div>
-        <span
-          className={`inline-flex w-fit items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${
-            online ? 'bg-emerald-400/10 text-emerald-400' : 'bg-amber-400/10 text-amber-400'
-          }`}
-        >
-          <span className="h-1.5 w-1.5 rounded-full bg-current" />
-          {online ? 'Online' : 'Offline'}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={`inline-flex w-fit items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${
+              online ? 'bg-emerald-400/10 text-emerald-400' : 'bg-amber-400/10 text-amber-400'
+            }`}
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-current" />
+            {online ? 'Online' : 'Offline'}
+          </span>
+          <button
+            type="button"
+            onClick={() => onRemoveDevice(device)}
+            disabled={removingDevice}
+            title={`Remove ${name}`}
+            aria-label={`Remove ${name}`}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-400/20 text-rose-400 transition-colors hover:bg-rose-400/10 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       {installations.length === 0 ? (
@@ -86,28 +106,42 @@ export default function LinkedDeviceGroup({
             const slug = String(installation.appCatalog?.slug || installation.slug || '').toLowerCase();
             const tone = appTone(slug);
             return (
-              <button
-                type="button"
+              <div
                 key={installation.id}
-                onClick={() => {
-                  if (!slug.includes('guardhub-kids') && !slug.includes('guardscreen')) {
-                    // TODO: Route unknown app catalog slugs to a generic app detail view when that screen exists.
-                  }
-                  onOpenApp(device, installation);
-                }}
-                className="flex w-full items-center gap-3 border-b border-white/10 px-5 py-3 text-left transition-colors last:border-b-0 hover:bg-slate-800/60"
+                className="flex items-center gap-2 border-b border-white/10 px-5 py-3 last:border-b-0 hover:bg-slate-800/60"
               >
-                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tone.bg} ${tone.text}`}>
-                  {tone.icon}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className={`text-sm font-medium ${tone.text}`}>
-                    {installation.appCatalog?.displayName || installation.displayName || 'App'}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!slug.includes('guardhub-kids') && !slug.includes('guardscreen')) {
+                      // TODO: Route unknown app catalog slugs to a generic app detail view when that screen exists.
+                    }
+                    onOpenApp(device, installation);
+                  }}
+                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                >
+                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tone.bg} ${tone.text}`}>
+                    {tone.icon}
                   </div>
-                  <div className="mt-0.5 truncate text-xs text-slate-500">{tone.sub}</div>
-                </div>
-                <ChevronRight className={`h-4 w-4 shrink-0 ${tone.text}`} />
-              </button>
+                  <div className="min-w-0 flex-1">
+                    <div className={`text-sm font-medium ${tone.text}`}>
+                      {installation.appCatalog?.displayName || installation.displayName || 'App'}
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-slate-500">{tone.sub}</div>
+                  </div>
+                  <ChevronRight className={`h-4 w-4 shrink-0 ${tone.text}`} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onRemoveApp(device, installation)}
+                  disabled={removingAppId === installation.id}
+                  title="Remove app installation"
+                  aria-label={`Remove ${installation.appCatalog?.displayName || installation.displayName || 'app installation'}`}
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-rose-400/20 text-rose-400 transition-colors hover:bg-rose-400/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
             );
           })}
         </div>

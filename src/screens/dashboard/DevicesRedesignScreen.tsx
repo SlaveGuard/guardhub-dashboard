@@ -466,6 +466,36 @@ export default function DevicesRedesignScreen() {
     onError: (error: AnyRecord) => showPlanLimitToast(error, 'Profile action failed', navigate),
   });
 
+  const refreshProfileData = (profileId: string) => {
+    queryClient.invalidateQueries({ queryKey: ['profiles'] });
+    queryClient.invalidateQueries({ queryKey: ['profiles', 'archived'] });
+    queryClient.invalidateQueries({ queryKey: ['profile', profileId] });
+    queryClient.invalidateQueries({ queryKey: ['subscription', 'limits'] });
+  };
+
+  const removeDeviceMutation = useMutation({
+    mutationFn: async (payload: { profileId: string; deviceId: string }) =>
+      (await apiClient.delete(`/devices/${payload.deviceId}`)).data,
+    onSuccess: (response: AnyRecord, payload) => {
+      refreshProfileData(payload.profileId);
+      queryClient.removeQueries({ queryKey: ['device', payload.deviceId] });
+      toast.success(response?.message || 'Device removed.');
+    },
+    onError: (error: AnyRecord) => toast.error(error.response?.data?.message || 'Failed to remove device'),
+  });
+
+  const removeAppMutation = useMutation({
+    mutationFn: async (payload: { profileId: string; deviceId: string; installationId: string }) =>
+      (await apiClient.delete(`/apps/${payload.installationId}`)).data,
+    onSuccess: (_, payload) => {
+      refreshProfileData(payload.profileId);
+      queryClient.invalidateQueries({ queryKey: ['device', payload.deviceId] });
+      queryClient.removeQueries({ queryKey: ['app', payload.installationId] });
+      toast.success('App installation removed.');
+    },
+    onError: (error: AnyRecord) => toast.error(error.response?.data?.message || 'Failed to remove app installation'),
+  });
+
   const handleCreateProfile = () => {
     if (!profileForm.name.trim()) {
       toast.error('Child name is required');
@@ -503,6 +533,33 @@ export default function DevicesRedesignScreen() {
     if (slug.includes('guardscreen')) {
       setView({ mode: 'guardscreen', profileId: selectedProfile.id, deviceId: device.id, deviceName: name });
     }
+  };
+
+  const handleRemoveDevice = (device: AnyRecord) => {
+    if (!selectedProfile || !device.id) return;
+    const name = getDeviceName(device);
+    const confirmed = window.confirm(
+      `Remove ${name}? This disconnects the device and all app installations under it.`,
+    );
+    if (!confirmed) return;
+    removeDeviceMutation.mutate({ profileId: selectedProfile.id, deviceId: device.id });
+  };
+
+  const handleRemoveApp = (device: AnyRecord, installation: AnyRecord) => {
+    if (!selectedProfile || !device.id || !installation.id) return;
+    const appName = installation.appCatalog?.displayName || installation.displayName || 'this app installation';
+    const lastApp = (device.appInstallations?.length ?? 0) <= 1;
+    const confirmed = window.confirm(
+      lastApp
+        ? `Remove ${appName}? This is the last app on ${getDeviceName(device)}, so the device will also be disconnected.`
+        : `Remove ${appName} from ${getDeviceName(device)}?`,
+    );
+    if (!confirmed) return;
+    removeAppMutation.mutate({
+      profileId: selectedProfile.id,
+      deviceId: device.id,
+      installationId: installation.id,
+    });
   };
 
   if (familyLoading) {
@@ -746,7 +803,20 @@ export default function DevicesRedesignScreen() {
             ) : (
               <div className="space-y-3">
                 {(selectedProfile.devices ?? []).map((device: AnyRecord) => (
-                  <LinkedDeviceGroup key={device.id} device={device} onOpenApp={openAppView} />
+                  <LinkedDeviceGroup
+                    key={device.id}
+                    device={device}
+                    onOpenApp={openAppView}
+                    onRemoveDevice={handleRemoveDevice}
+                    onRemoveApp={handleRemoveApp}
+                    removingDevice={
+                      removeDeviceMutation.isPending &&
+                      removeDeviceMutation.variables?.deviceId === device.id
+                    }
+                    removingAppId={
+                      removeAppMutation.isPending ? removeAppMutation.variables?.installationId ?? null : null
+                    }
+                  />
                 ))}
               </div>
             )}
