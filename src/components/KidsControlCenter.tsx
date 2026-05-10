@@ -288,77 +288,6 @@ function blockReasonLabel(reason: string): string {
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-function PerAppLimitRow({
-  packageName,
-  minutes,
-  isPending,
-  onChange,
-  onRemove,
-}: {
-  packageName: string;
-  minutes: number;
-  isPending: boolean;
-  onChange: (minutes: number) => void;
-  onRemove: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(String(minutes));
-
-  const commitEdit = () => {
-    const parsed = Math.max(1, parseInt(draft, 10) || 1);
-    if (parsed !== minutes) onChange(parsed);
-    setEditing(false);
-  };
-
-  return (
-    <div className="flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2.5">
-      <Smartphone className="h-4 w-4 shrink-0 text-brand-400" />
-      <span className="min-w-0 flex-1 truncate font-mono text-sm text-slate-200">
-        {packageName}
-      </span>
-      {editing ? (
-        <div className="flex items-center gap-1.5">
-          <input
-            autoFocus
-            type="number"
-            min={1}
-            max={720}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={commitEdit}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') commitEdit();
-              if (event.key === 'Escape') setEditing(false);
-            }}
-            className="w-16 rounded-md border border-brand-500 bg-slate-900 px-2 py-1 text-center text-sm text-slate-100 outline-none"
-          />
-          <span className="text-xs text-slate-500">min</span>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => {
-            setDraft(String(minutes));
-            setEditing(true);
-          }}
-          disabled={isPending}
-          className="rounded-full bg-brand-500/10 px-2.5 py-1 text-xs font-semibold text-brand-400 hover:bg-brand-500/20 disabled:opacity-40"
-        >
-          {minutesLabel(minutes)}
-        </button>
-      )}
-      <button
-        type="button"
-        onClick={onRemove}
-        disabled={isPending}
-        className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-rose-400/10 hover:text-rose-400 disabled:opacity-40"
-      >
-        Remove
-      </button>
-    </div>
-  );
-}
-
 function ScheduledBlockRow({
   block,
   isPending,
@@ -455,6 +384,8 @@ export default function KidsControlCenter({
   const [perAppLimits, setPerAppLimits] = useState<Record<string, number>>({});
   const [newLimitPackage, setNewLimitPackage] = useState('');
   const [newLimitMinutes, setNewLimitMinutes] = useState(30);
+  const [perAppEditing, setPerAppEditing] = useState<string | null>(null);
+  const [perAppDraft, setPerAppDraft] = useState('');
   const [scheduledBlocks, setScheduledBlocks] = useState<ScheduledBlock[]>([]);
   const [showAddBlock, setShowAddBlock] = useState(false);
   const [newBlock, setNewBlock] = useState<Omit<ScheduledBlock, 'id'>>({
@@ -765,6 +696,20 @@ export default function KidsControlCenter({
     });
   };
 
+  const commitDailyLimit = () => {
+    patchPolicyMutation.mutate({
+      key: 'kids.screen_time.daily_limit',
+      value: { enabled: dailyLimitHours > 0, minutes: dailyLimitHours * 60 },
+      strength: 'soft',
+    });
+  };
+
+  const commitDailyLimitFromMouse = () => {
+    if (!window.PointerEvent) {
+      commitDailyLimit();
+    }
+  };
+
   const addPerAppLimit = () => {
     if (
       !newLimitPackage ||
@@ -1043,7 +988,8 @@ export default function KidsControlCenter({
               step={1}
               value={dailyLimitHours}
               onChange={(event) => setDailyLimitHours(Number(event.target.value))}
-              onMouseUp={() => patchPolicyMutation.mutate({ key: 'kids.screen_time.daily_limit', value: { enabled: dailyLimitHours > 0, minutes: dailyLimitHours * 60 }, strength: 'soft' })}
+              onPointerUp={commitDailyLimit}
+              onMouseUp={commitDailyLimitFromMouse}
               className="mt-5 w-full accent-brand-500"
             />
           </section>
@@ -1052,10 +998,10 @@ export default function KidsControlCenter({
               <h3 className="text-sm font-semibold text-slate-100">Scheduled Blocks</h3>
               <button
                 type="button"
-                onClick={() => setShowAddBlock(true)}
+                onClick={() => setShowAddBlock((prev) => !prev)}
                 className="rounded-lg border border-brand-500/20 px-3 py-1.5 text-xs text-brand-400 hover:bg-brand-500/10"
               >
-                + Add Schedule
+                {showAddBlock ? 'Cancel' : '+ Add Schedule'}
               </button>
             </div>
             <p className="mt-1 text-xs text-slate-500">Lock the device during specific daily windows.</p>
@@ -1129,7 +1075,7 @@ export default function KidsControlCenter({
                               ...prev,
                               days: prev.days.includes(index)
                                 ? prev.days.filter((day) => day !== index)
-                                : [...prev.days, index].sort(),
+                                : [...prev.days, index].sort((a, b) => a - b),
                             }))
                           }
                           className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold transition-colors ${
@@ -1185,24 +1131,71 @@ export default function KidsControlCenter({
             </p>
             {Object.keys(perAppLimits).length > 0 ? (
               <div className="mt-4 space-y-2">
-                {Object.entries(perAppLimits).map(([pkg, minutes]) => (
-                  <PerAppLimitRow
-                    key={pkg}
-                    packageName={pkg}
-                    minutes={minutes}
-                    isPending={patchPolicyMutation.isPending}
-                    onChange={(nextMinutes) => {
-                      const next = { ...perAppLimits, [pkg]: nextMinutes };
-                      setPerAppLimits(next);
-                      patchPerAppLimits(next);
-                    }}
-                    onRemove={() => {
-                      const { [pkg]: _removed, ...rest } = perAppLimits;
-                      setPerAppLimits(rest);
-                      patchPerAppLimits(rest);
-                    }}
-                  />
-                ))}
+                {Object.entries(perAppLimits).map(([pkg, minutes]) => {
+                  const isEditing = perAppEditing === pkg;
+                  const commitEdit = () => {
+                    const nextMinutes = Math.max(1, parseInt(perAppDraft, 10) || 1);
+                    const next = { ...perAppLimits, [pkg]: nextMinutes };
+                    setPerAppLimits(next);
+                    patchPerAppLimits(next);
+                    setPerAppEditing(null);
+                  };
+
+                  return (
+                    <div
+                      key={pkg}
+                      className="flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2.5"
+                    >
+                      <Smartphone className="h-4 w-4 shrink-0 text-brand-400" />
+                      <span className="min-w-0 flex-1 truncate font-mono text-sm text-slate-200">
+                        {pkg}
+                      </span>
+                      {isEditing ? (
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            autoFocus
+                            type="number"
+                            min={1}
+                            max={720}
+                            value={perAppDraft}
+                            onChange={(event) => setPerAppDraft(event.target.value)}
+                            onBlur={commitEdit}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') commitEdit();
+                              if (event.key === 'Escape') setPerAppEditing(null);
+                            }}
+                            className="w-16 rounded-md border border-brand-500 bg-slate-900 px-2 py-1 text-center text-sm text-slate-100 outline-none"
+                          />
+                          <span className="text-xs text-slate-500">min</span>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPerAppEditing(pkg);
+                            setPerAppDraft(String(minutes));
+                          }}
+                          disabled={patchPolicyMutation.isPending}
+                          className="rounded-full bg-brand-500/10 px-2.5 py-1 text-xs font-semibold text-brand-400 hover:bg-brand-500/20 disabled:opacity-40"
+                        >
+                          {minutesLabel(minutes)}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const { [pkg]: _removed, ...rest } = perAppLimits;
+                          setPerAppLimits(rest);
+                          patchPerAppLimits(rest);
+                        }}
+                        disabled={patchPolicyMutation.isPending}
+                        className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-rose-400/10 hover:text-rose-400 disabled:opacity-40"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <div className="mt-4 rounded-lg border border-dashed border-white/10 px-4 py-6 text-center text-xs text-slate-500">

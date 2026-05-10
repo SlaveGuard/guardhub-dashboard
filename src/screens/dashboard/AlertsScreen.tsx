@@ -6,13 +6,13 @@ import { apiClient } from '../../api/client';
 type AnyRecord = Record<string, any>;
 type AlertSourceFilter = 'all' | 'kids' | 'guardscreen';
 
-const kidsAlertTypes = ['kids_app_blocked', 'kids_limit_reached', 'kids_bedtime_violation'];
+const KIDS_ALERT_TYPES = ['kids_app_blocked', 'kids_limit_reached', 'kids_bedtime_violation'];
 
 function alertBadgeClass(alertType: string): string {
-  if (kidsAlertTypes.includes(alertType)) {
+  if (KIDS_ALERT_TYPES.includes(alertType)) {
     return 'bg-accent-teal/10 text-accent-teal border border-accent-teal/20';
   }
-  if (['detection', 'uninstall_attempt'].includes(alertType)) {
+  if (['detection', 'uninstall_attempt', 'service_disabled'].includes(alertType)) {
     return 'bg-rose-400/10 text-rose-400 border border-rose-400/20';
   }
   return 'bg-slate-700/50 text-slate-300 border border-white/10';
@@ -21,19 +21,19 @@ function alertBadgeClass(alertType: string): string {
 function alertTypeLabel(alertType: string): string {
   switch (alertType) {
     case 'kids_app_blocked':
-      return '🚫 App Blocked';
+      return 'App blocked';
     case 'kids_limit_reached':
-      return '⏱ Limit Reached';
+      return 'Limit reached';
     case 'kids_bedtime_violation':
-      return '🌙 Bedtime';
+      return 'Bedtime';
     case 'detection':
-      return '🛡 Detection';
+      return 'Detection';
     case 'uninstall_attempt':
-      return '⚠ Uninstall Attempt';
+      return 'Uninstall attempt';
     case 'pin_failed':
-      return '🔑 PIN Failed';
+      return 'PIN failed';
     case 'service_disabled':
-      return '⛔ Service Disabled';
+      return 'Service disabled';
     default:
       return alertType.replace(/_/g, ' ');
   }
@@ -49,21 +49,24 @@ export default function AlertsScreen() {
   });
 
   const filteredAlerts = useMemo(() => {
-    const sourceFiltered =
-      filterSource === 'kids'
-        ? alerts.filter((alert) => kidsAlertTypes.includes(alert.alertType))
-        : filterSource === 'guardscreen'
-          ? alerts.filter((alert) => !kidsAlertTypes.includes(alert.alertType))
-          : alerts;
-
-    if (!filter.trim()) return sourceFiltered;
+    if (!filter.trim()) return alerts;
     const needle = filter.trim().toLowerCase();
-    return sourceFiltered.filter((alert) =>
+    return alerts.filter((alert) =>
       [alert.message, alert.alertType, alert.device?.name, alert.device?.profile?.name]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(needle)),
     );
-  }, [alerts, filter, filterSource]);
+  }, [alerts, filter]);
+
+  const sourceFilteredAlerts = useMemo(
+    () =>
+      filteredAlerts.filter((alert: AnyRecord) => {
+        if (filterSource === 'kids') return KIDS_ALERT_TYPES.includes(String(alert.alertType));
+        if (filterSource === 'guardscreen') return !KIDS_ALERT_TYPES.includes(String(alert.alertType));
+        return true;
+      }),
+    [filteredAlerts, filterSource],
+  );
 
   return (
     <div className="space-y-6">
@@ -92,7 +95,7 @@ export default function AlertsScreen() {
                   : 'border border-white/10 text-slate-400 hover:bg-white/5'
               }`}
             >
-              {source === 'all' ? 'All alerts' : source === 'kids' ? '🧒 Kids' : '🛡 GuardScreen'}
+              {source === 'all' ? 'All alerts' : source === 'kids' ? 'Kids' : 'GuardScreen'}
             </button>
           ))}
         </div>
@@ -102,7 +105,7 @@ export default function AlertsScreen() {
         <div className="glass-panel p-12 flex justify-center items-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-500"></div>
         </div>
-      ) : filteredAlerts.length === 0 ? (
+      ) : sourceFilteredAlerts.length === 0 ? (
         <div className="glass-panel p-12 flex flex-col items-center text-center">
           <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-dark-700 flex items-center justify-center mb-4">
             <Info className="w-8 h-8 text-slate-400" />
@@ -114,7 +117,7 @@ export default function AlertsScreen() {
         </div>
       ) : (
         <div className="space-y-4">
-          {filteredAlerts.map((alert) => (
+          {sourceFilteredAlerts.map((alert) => (
             <div key={alert.id} className="glass-panel p-5">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex items-start gap-3">
@@ -124,8 +127,8 @@ export default function AlertsScreen() {
                   <div>
                     <div className="font-semibold text-slate-900 dark:text-slate-100">{alert.message}</div>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${alertBadgeClass(alert.alertType)}`}>
-                        {alertTypeLabel(alert.alertType)}
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${alertBadgeClass(String(alert.alertType))}`}>
+                        {alertTypeLabel(String(alert.alertType))}
                       </span>
                       {alert.source === 'kids' && (
                         <span className="rounded-full bg-accent-teal/10 px-2 py-0.5 text-[10px] font-semibold text-accent-teal">
