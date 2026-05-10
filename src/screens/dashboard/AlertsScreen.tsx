@@ -83,19 +83,19 @@ export default function AlertsScreen() {
           placeholder="Filter by message, profile, device, or alert type"
           className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-dark-800 px-4 py-3 text-slate-900 dark:text-slate-100 outline-none focus:border-brand-500"
         />
-        <div className="mt-3 flex gap-2">
-          {(['all', 'kids', 'guardscreen'] as const).map((source) => (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {(['all', 'kids', 'guardscreen'] as const).map((f) => (
             <button
-              key={source}
+              key={f}
               type="button"
-              onClick={() => setFilterSource(source)}
+              onClick={() => setFilterSource(f)}
               className={`rounded-full px-3 py-1.5 text-xs font-semibold capitalize transition-colors ${
-                filterSource === source
+                filterSource === f
                   ? 'bg-brand-600 text-white'
                   : 'border border-white/10 text-slate-400 hover:bg-white/5'
               }`}
             >
-              {source === 'all' ? 'All alerts' : source === 'kids' ? 'Kids' : 'GuardScreen'}
+              {f === 'all' ? 'All alerts' : f === 'kids' ? 'Kids' : 'GuardScreen'}
             </button>
           ))}
         </div>

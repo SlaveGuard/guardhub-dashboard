@@ -60,9 +60,9 @@ interface ScheduledBlock {
   id: string;
   name: string;
   enabled: boolean;
-  startTime: string;
-  endTime: string;
-  days: number[];
+  startTime: string; // 'HH:MM' 24h
+  endTime: string;   // 'HH:MM' 24h
+  days: number[];    // 0=Sun, 1=Mon … 6=Sat
 }
 
 const tabs: Array<{ id: TabId; label: string }> = [
@@ -286,52 +286,6 @@ function blockReasonLabel(reason: string): string {
   }
 }
 
-const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-function ScheduledBlockRow({
-  block,
-  isPending,
-  onToggle,
-  onRemove,
-}: {
-  block: ScheduledBlock;
-  isPending: boolean;
-  onToggle: (enabled: boolean) => void;
-  onRemove: () => void;
-}) {
-  return (
-    <div className={`flex items-center gap-3 rounded-lg border px-3 py-3 ${
-      block.enabled ? 'border-brand-500/20 bg-brand-500/5' : 'border-white/10 bg-slate-900/40'
-    }`}>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-slate-100">{block.name}</span>
-          {!block.enabled && (
-            <span className="rounded-full bg-slate-700 px-2 py-0.5 text-[10px] text-slate-400">
-              Off
-            </span>
-          )}
-        </div>
-        <div className="mt-0.5 text-xs text-slate-500">
-          {block.startTime} - {block.endTime} ·{' '}
-          {block.days.length === 7
-            ? 'Every day'
-            : block.days.map((day) => DAY_LABELS[day]).filter(Boolean).join(', ')}
-        </div>
-      </div>
-      <Toggle checked={block.enabled} disabled={isPending} onChange={onToggle} />
-      <button
-        type="button"
-        onClick={onRemove}
-        disabled={isPending}
-        className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-rose-400/10 hover:text-rose-400 disabled:opacity-40"
-      >
-        Delete
-      </button>
-    </div>
-  );
-}
-
 export default function KidsControlCenter({
   profile,
   device,
@@ -381,11 +335,7 @@ export default function KidsControlCenter({
   const [bedtimeWake, setBedtimeWake] = useState({ hour: 7, minute: 0 });
   const [blockedCategories, setBlockedCategories] = useState<Set<string>>(new Set());
   const [newPackage, setNewPackage] = useState('');
-  const [perAppLimits, setPerAppLimits] = useState<Record<string, number>>({});
-  const [newLimitPackage, setNewLimitPackage] = useState('');
-  const [newLimitMinutes, setNewLimitMinutes] = useState(30);
-  const [perAppEditing, setPerAppEditing] = useState<string | null>(null);
-  const [perAppDraft, setPerAppDraft] = useState('');
+  // Scheduled Blocks
   const [scheduledBlocks, setScheduledBlocks] = useState<ScheduledBlock[]>([]);
   const [showAddBlock, setShowAddBlock] = useState(false);
   const [newBlock, setNewBlock] = useState<Omit<ScheduledBlock, 'id'>>({
@@ -395,6 +345,11 @@ export default function KidsControlCenter({
     endTime: '15:00',
     days: [1, 2, 3, 4, 5],
   });
+  // Per-App Limits interactive state
+  const [perAppEditing, setPerAppEditing] = useState<string | null>(null);
+  const [perAppDraft, setPerAppDraft] = useState('');
+  const [newLimitPackage, setNewLimitPackage] = useState('');
+  const [newLimitMinutes, setNewLimitMinutes] = useState(30);
 
   useEffect(() => {
     setDailyLimitHours(Math.round(dailyLimitMinutes / 60));
@@ -438,35 +393,20 @@ export default function KidsControlCenter({
   }, [policy]);
 
   useEffect(() => {
-    const perApp = entryValue(policy, 'kids.screen_time.per_app');
-    if (perApp && typeof perApp === 'object') {
-      const parsed: Record<string, number> = {};
-      for (const [pkg, minutes] of Object.entries(perApp)) {
-        const value = Number(minutes);
-        if (typeof pkg === 'string' && value > 0) {
-          parsed[pkg] = value;
-        }
-      }
-      setPerAppLimits(parsed);
-    } else {
-      setPerAppLimits({});
-    }
-  }, [policy]);
-
-  useEffect(() => {
-    const scheduled = entryValue(policy, 'kids.screen_time.scheduled_blocks');
-    if (scheduled?.blocks && Array.isArray(scheduled.blocks)) {
-      const parsed: ScheduledBlock[] = scheduled.blocks
-        .filter((block: AnyRecord) => typeof block.id === 'string' && typeof block.name === 'string')
-        .map((block: AnyRecord) => ({
-          id: String(block.id),
-          name: String(block.name),
-          enabled: Boolean(block.enabled ?? true),
-          startTime: String(block.startTime ?? '08:00'),
-          endTime: String(block.endTime ?? '17:00'),
-          days: Array.isArray(block.days) ? block.days.map(Number).filter((day) => day >= 0 && day <= 6) : [1, 2, 3, 4, 5],
-        }));
-      setScheduledBlocks(parsed);
+    const sb = entryValue(policy, 'kids.screen_time.scheduled_blocks');
+    if (sb?.blocks && Array.isArray(sb.blocks)) {
+      setScheduledBlocks(
+        (sb.blocks as AnyRecord[])
+          .filter((b) => typeof b.id === 'string' && typeof b.name === 'string')
+          .map((b) => ({
+            id: String(b.id),
+            name: String(b.name),
+            enabled: Boolean(b.enabled ?? true),
+            startTime: String(b.startTime ?? '08:00'),
+            endTime: String(b.endTime ?? '17:00'),
+            days: Array.isArray(b.days) ? (b.days as number[]).map(Number) : [1, 2, 3, 4, 5],
+          })),
+      );
     } else {
       setScheduledBlocks([]);
     }
@@ -559,6 +499,14 @@ export default function KidsControlCenter({
   });
 
   const recentAlerts = useMemo<AnyRecord[]>(() => alerts.slice(0, 5), [alerts]);
+  const perAppLimits = useMemo<Array<{ packageName: string; limitMinutes: number }>>(() => {
+    const limits = entryValue(policy, 'kids.screen_time.per_app');
+    if (!limits || typeof limits !== 'object') return [];
+    return Object.entries(limits).map(([packageName, limitMinutes]) => ({
+      packageName,
+      limitMinutes: Number(limitMinutes ?? 0),
+    }));
+  }, [policy]);
   const usageSummaries = useMemo(() => parseUsageSummaries(auditEntries), [auditEntries]);
   const blockedEvents = useMemo(() => parseBlockedEvents(auditEntries), [auditEntries]);
   const latestHeartbeat = useMemo(() => parseLatestHeartbeat(auditEntries), [auditEntries]);
@@ -696,44 +644,21 @@ export default function KidsControlCenter({
     });
   };
 
-  const commitDailyLimit = () => {
-    patchPolicyMutation.mutate({
-      key: 'kids.screen_time.daily_limit',
-      value: { enabled: dailyLimitHours > 0, minutes: dailyLimitHours * 60 },
-      strength: 'soft',
-    });
-  };
-
-  const commitDailyLimitFromMouse = () => {
-    if (!window.PointerEvent) {
-      commitDailyLimit();
-    }
+  const currentPerAppMap = (): Record<string, number> => {
+    const raw = entryValue(policy, 'kids.screen_time.per_app');
+    if (!raw || typeof raw !== 'object') return {};
+    return Object.fromEntries(
+      Object.entries(raw as Record<string, unknown>).map(([k, v]) => [k, Number(v)]),
+    );
   };
 
   const addPerAppLimit = () => {
-    if (
-      !newLimitPackage ||
-      newLimitPackage in perAppLimits ||
-      !Number.isFinite(newLimitMinutes) ||
-      newLimitMinutes <= 0
-    ) {
-      return;
-    }
-    const next = { ...perAppLimits, [newLimitPackage]: newLimitMinutes };
-    setPerAppLimits(next);
-    patchPerAppLimits(next);
+    if (!newLimitPackage.trim()) return;
+    const map = currentPerAppMap();
+    if (newLimitPackage in map) return;
+    patchPerAppLimits({ ...map, [newLimitPackage.trim()]: newLimitMinutes });
     setNewLimitPackage('');
     setNewLimitMinutes(30);
-  };
-
-  const resetNewBlock = () => {
-    setNewBlock({
-      name: '',
-      enabled: true,
-      startTime: '08:00',
-      endTime: '15:00',
-      days: [1, 2, 3, 4, 5],
-    });
   };
 
   return (
@@ -981,64 +906,101 @@ export default function KidsControlCenter({
               <span className="font-medium text-slate-100">Total daily limit</span>
               <span className="text-brand-400">{dailyLimitHours === 0 ? 'No limit' : `${dailyLimitHours}h`}</span>
             </div>
-            <input
-              type="range"
-              min={0}
-              max={12}
-              step={1}
-              value={dailyLimitHours}
-              onChange={(event) => setDailyLimitHours(Number(event.target.value))}
-              onPointerUp={commitDailyLimit}
-              onMouseUp={commitDailyLimitFromMouse}
-              className="mt-5 w-full accent-brand-500"
-            />
+            {(() => {
+              const commitLimit = () =>
+                patchPolicyMutation.mutate({
+                  key: 'kids.screen_time.daily_limit',
+                  value: { enabled: dailyLimitHours > 0, minutes: dailyLimitHours * 60 },
+                  strength: 'soft',
+                });
+              return (
+                <input
+                  type="range"
+                  min={0}
+                  max={12}
+                  step={1}
+                  value={dailyLimitHours}
+                  onChange={(event) => setDailyLimitHours(Number(event.target.value))}
+                  onPointerUp={commitLimit}
+                  onMouseUp={commitLimit}
+                  className="mt-5 w-full accent-brand-500"
+                />
+              );
+            })()}
           </section>
           <section className="glass-panel p-5">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-slate-100">Scheduled Blocks</h3>
               <button
                 type="button"
-                onClick={() => setShowAddBlock((prev) => !prev)}
+                onClick={() => setShowAddBlock((v) => !v)}
                 className="rounded-lg border border-brand-500/20 px-3 py-1.5 text-xs text-brand-400 hover:bg-brand-500/10"
               >
                 {showAddBlock ? 'Cancel' : '+ Add Schedule'}
               </button>
             </div>
-            <p className="mt-1 text-xs text-slate-500">Lock the device during specific daily windows.</p>
+            <p className="mt-1 text-xs text-slate-500">Lock the device during specific time windows.</p>
+
             <div className="mt-4 space-y-2">
               {scheduledBlocks.length ? (
                 scheduledBlocks.map((block) => (
-                  <ScheduledBlockRow
+                  <div
                     key={block.id}
-                    block={block}
-                    isPending={patchPolicyMutation.isPending}
-                    onToggle={(enabled) => {
-                      const next = scheduledBlocks.map((item) =>
-                        item.id === block.id ? { ...item, enabled } : item,
-                      );
-                      setScheduledBlocks(next);
-                      patchScheduledBlocks(next);
-                    }}
-                    onRemove={() => {
-                      const next = scheduledBlocks.filter((item) => item.id !== block.id);
-                      setScheduledBlocks(next);
-                      patchScheduledBlocks(next);
-                    }}
-                  />
+                    className={`flex items-center gap-3 rounded-lg border px-3 py-3 ${
+                      block.enabled ? 'border-brand-500/20 bg-brand-500/5' : 'border-white/10 bg-slate-900/40'
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-slate-100">{block.name}</span>
+                        {!block.enabled && (
+                          <span className="rounded-full bg-slate-700 px-2 py-0.5 text-[10px] text-slate-400">Off</span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        {block.startTime} – {block.endTime} ·{' '}
+                        {block.days.length === 7
+                          ? 'Every day'
+                          : block.days.map((d) => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ')}
+                      </div>
+                    </div>
+                    <Toggle
+                      checked={block.enabled}
+                      disabled={patchPolicyMutation.isPending}
+                      onChange={(enabled) => {
+                        const next = scheduledBlocks.map((b) =>
+                          b.id === block.id ? { ...b, enabled } : b,
+                        );
+                        setScheduledBlocks(next);
+                        patchScheduledBlocks(next);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={patchPolicyMutation.isPending}
+                      onClick={() => {
+                        const next = scheduledBlocks.filter((b) => b.id !== block.id);
+                        setScheduledBlocks(next);
+                        patchScheduledBlocks(next);
+                      }}
+                      className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-rose-400/10 hover:text-rose-400 disabled:opacity-40"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 ))
               ) : (
-                <div className="rounded-lg border border-dashed border-white/10 px-4 py-5 text-center text-xs text-slate-500">
-                  No scheduled blocks. Tap "+ Add Schedule" to create one.
-                </div>
+                <EmptyState>No scheduled blocks. Tap "+ Add Schedule" to create one.</EmptyState>
               )}
             </div>
+
             {showAddBlock ? (
               <div className="mt-4 rounded-xl border border-brand-500/20 bg-slate-900/60 p-4">
                 <h4 className="mb-3 text-sm font-semibold text-slate-100">New schedule</h4>
                 <div className="space-y-3">
                   <input
                     value={newBlock.name}
-                    onChange={(event) => setNewBlock((prev) => ({ ...prev, name: event.target.value }))}
+                    onChange={(e) => setNewBlock((p) => ({ ...p, name: e.target.value }))}
                     placeholder="Block name (e.g. School Hours)"
                     className="w-full rounded-lg border border-white/10 bg-slate-800 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-500"
                   />
@@ -1048,17 +1010,17 @@ export default function KidsControlCenter({
                       <input
                         type="time"
                         value={newBlock.startTime}
-                        onChange={(event) => setNewBlock((prev) => ({ ...prev, startTime: event.target.value }))}
+                        onChange={(e) => setNewBlock((p) => ({ ...p, startTime: e.target.value }))}
                         className="w-full rounded-lg border border-white/10 bg-slate-800 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-500"
                       />
                     </div>
-                    <span className="mt-4 text-slate-500">-</span>
+                    <span className="mt-4 text-slate-500">–</span>
                     <div className="flex flex-1 flex-col gap-1">
                       <label className="text-xs text-slate-500">End</label>
                       <input
                         type="time"
                         value={newBlock.endTime}
-                        onChange={(event) => setNewBlock((prev) => ({ ...prev, endTime: event.target.value }))}
+                        onChange={(e) => setNewBlock((p) => ({ ...p, endTime: e.target.value }))}
                         className="w-full rounded-lg border border-white/10 bg-slate-800 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-500"
                       />
                     </div>
@@ -1066,20 +1028,20 @@ export default function KidsControlCenter({
                   <div>
                     <label className="mb-1.5 block text-xs text-slate-500">Days</label>
                     <div className="flex gap-1.5">
-                      {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((label, index) => (
+                      {['S','M','T','W','T','F','S'].map((label, i) => (
                         <button
-                          key={`${label}-${index}`}
+                          key={i}
                           type="button"
                           onClick={() =>
-                            setNewBlock((prev) => ({
-                              ...prev,
-                              days: prev.days.includes(index)
-                                ? prev.days.filter((day) => day !== index)
-                                : [...prev.days, index].sort((a, b) => a - b),
+                            setNewBlock((p) => ({
+                              ...p,
+                              days: p.days.includes(i)
+                                ? p.days.filter((d) => d !== i)
+                                : [...p.days, i].sort((a, b) => a - b),
                             }))
                           }
-                          className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold transition-colors ${
-                            newBlock.days.includes(index)
+                          className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold ${
+                            newBlock.days.includes(i)
                               ? 'border border-brand-500 bg-brand-600 text-white'
                               : 'border border-white/10 text-slate-500'
                           }`}
@@ -1094,7 +1056,7 @@ export default function KidsControlCenter({
                       type="button"
                       onClick={() => {
                         setShowAddBlock(false);
-                        resetNewBlock();
+                        setNewBlock({ name: '', enabled: true, startTime: '08:00', endTime: '15:00', days: [1,2,3,4,5] });
                       }}
                       className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-white/5"
                     >
@@ -1113,7 +1075,7 @@ export default function KidsControlCenter({
                         setScheduledBlocks(next);
                         patchScheduledBlocks(next);
                         setShowAddBlock(false);
-                        resetNewBlock();
+                        setNewBlock({ name: '', enabled: true, startTime: '08:00', endTime: '15:00', days: [1,2,3,4,5] });
                       }}
                       className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-500 disabled:opacity-40"
                     >
@@ -1126,29 +1088,20 @@ export default function KidsControlCenter({
           </section>
           <section className="glass-panel p-5 lg:col-span-2">
             <h3 className="text-sm font-semibold text-slate-100">Per-App Time Limits</h3>
-            <p className="mt-1 text-xs text-slate-500">
-              Set a daily time cap for individual apps. Enter the Android package name.
-            </p>
-            {Object.keys(perAppLimits).length > 0 ? (
-              <div className="mt-4 space-y-2">
-                {Object.entries(perAppLimits).map(([pkg, minutes]) => {
-                  const isEditing = perAppEditing === pkg;
-                  const commitEdit = () => {
-                    const nextMinutes = Math.max(1, parseInt(perAppDraft, 10) || 1);
-                    const next = { ...perAppLimits, [pkg]: nextMinutes };
-                    setPerAppLimits(next);
-                    patchPerAppLimits(next);
-                    setPerAppEditing(null);
-                  };
+            <p className="mt-1 text-xs text-slate-500">Daily cap for individual apps. Use Android package names.</p>
 
+            {perAppLimits.length > 0 ? (
+              <div className="mt-4 space-y-2">
+                {perAppLimits.map((app) => {
+                  const isEditing = perAppEditing === app.packageName;
                   return (
                     <div
-                      key={pkg}
+                      key={app.packageName}
                       className="flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2.5"
                     >
                       <Smartphone className="h-4 w-4 shrink-0 text-brand-400" />
                       <span className="min-w-0 flex-1 truncate font-mono text-sm text-slate-200">
-                        {pkg}
+                        {app.packageName}
                       </span>
                       {isEditing ? (
                         <div className="flex items-center gap-1.5">
@@ -1158,11 +1111,19 @@ export default function KidsControlCenter({
                             min={1}
                             max={720}
                             value={perAppDraft}
-                            onChange={(event) => setPerAppDraft(event.target.value)}
-                            onBlur={commitEdit}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter') commitEdit();
-                              if (event.key === 'Escape') setPerAppEditing(null);
+                            onChange={(e) => setPerAppDraft(e.target.value)}
+                            onBlur={() => {
+                              const m = Math.max(1, parseInt(perAppDraft, 10) || 1);
+                              patchPerAppLimits({ ...currentPerAppMap(), [app.packageName]: m });
+                              setPerAppEditing(null);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                const m = Math.max(1, parseInt(perAppDraft, 10) || 1);
+                                patchPerAppLimits({ ...currentPerAppMap(), [app.packageName]: m });
+                                setPerAppEditing(null);
+                              }
+                              if (e.key === 'Escape') setPerAppEditing(null);
                             }}
                             className="w-16 rounded-md border border-brand-500 bg-slate-900 px-2 py-1 text-center text-sm text-slate-100 outline-none"
                           />
@@ -1172,20 +1133,19 @@ export default function KidsControlCenter({
                         <button
                           type="button"
                           onClick={() => {
-                            setPerAppEditing(pkg);
-                            setPerAppDraft(String(minutes));
+                            setPerAppEditing(app.packageName);
+                            setPerAppDraft(String(app.limitMinutes));
                           }}
                           disabled={patchPolicyMutation.isPending}
                           className="rounded-full bg-brand-500/10 px-2.5 py-1 text-xs font-semibold text-brand-400 hover:bg-brand-500/20 disabled:opacity-40"
                         >
-                          {minutesLabel(minutes)}
+                          {minutesLabel(app.limitMinutes)}
                         </button>
                       )}
                       <button
                         type="button"
                         onClick={() => {
-                          const { [pkg]: _removed, ...rest } = perAppLimits;
-                          setPerAppLimits(rest);
+                          const { [app.packageName]: _removed, ...rest } = currentPerAppMap();
                           patchPerAppLimits(rest);
                         }}
                         disabled={patchPolicyMutation.isPending}
@@ -1205,10 +1165,8 @@ export default function KidsControlCenter({
             <div className="mt-4 flex flex-wrap gap-2">
               <input
                 value={newLimitPackage}
-                onChange={(event) => setNewLimitPackage(event.target.value.trim())}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') addPerAppLimit();
-                }}
+                onChange={(e) => setNewLimitPackage(e.target.value.trim())}
+                onKeyDown={(e) => { if (e.key === 'Enter') addPerAppLimit(); }}
                 placeholder="com.example.app"
                 className="min-w-0 flex-1 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2 font-mono text-sm text-slate-100 outline-none focus:border-brand-500"
               />
@@ -1218,17 +1176,14 @@ export default function KidsControlCenter({
                   min={1}
                   max={720}
                   value={newLimitMinutes}
-                  onChange={(event) => {
-                    const minutes = Number(event.target.value);
-                    setNewLimitMinutes(Number.isFinite(minutes) ? Math.max(1, minutes) : 1);
-                  }}
+                  onChange={(e) => setNewLimitMinutes(Math.max(1, Number(e.target.value)))}
                   className="w-20 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2 text-center text-sm text-slate-100 outline-none focus:border-brand-500"
                 />
                 <span className="text-xs text-slate-500">min/day</span>
               </div>
               <button
                 type="button"
-                disabled={!newLimitPackage || newLimitPackage in perAppLimits || patchPolicyMutation.isPending}
+                disabled={!newLimitPackage.trim() || patchPolicyMutation.isPending}
                 onClick={addPerAppLimit}
                 className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-500 disabled:opacity-40"
               >
@@ -1236,8 +1191,7 @@ export default function KidsControlCenter({
               </button>
             </div>
             <p className="mt-1.5 text-xs text-slate-500">
-              Package name example:{' '}
-              <span className="font-mono text-slate-400">com.tiktok.android</span>
+              Example: <span className="font-mono text-slate-400">com.tiktok.android</span>
             </p>
           </section>
         </div>
