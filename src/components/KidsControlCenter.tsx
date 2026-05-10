@@ -17,6 +17,15 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { apiClient } from '../api/client';
+import {
+  APP_CATEGORIES,
+  APP_CATALOG,
+  CATEGORY_EMOJI,
+  POPULAR_APPS,
+  getAppsByCategory,
+  searchApps,
+  type CatalogApp,
+} from '../data/kidsAppCatalog';
 
 type AnyRecord = Record<string, any>;
 type TabId = 'overview' | 'screen-time' | 'apps' | 'web-filter' | 'bedtime' | 'reports';
@@ -286,6 +295,89 @@ function blockReasonLabel(reason: string): string {
   }
 }
 
+/**
+ * Renders a square app icon: tries loading from icon.horse, falls back to a
+ * coloured letter-avatar.
+ */
+function AppIcon({
+  app,
+  size = 36,
+}: {
+  app: CatalogApp;
+  size?: number;
+}) {
+  const [failed, setFailed] = useState(false);
+  const url = `https://icon.horse/icon/${app.iconDomain}`;
+
+  return (
+    <div
+      className="flex shrink-0 items-center justify-center overflow-hidden rounded-xl"
+      style={{ width: size, height: size, background: app.iconColor }}
+    >
+      {!failed ? (
+        <img
+          src={url}
+          alt={app.name}
+          width={size}
+          height={size}
+          className="h-full w-full object-cover"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <span
+          className="font-bold text-white"
+          style={{ fontSize: size * 0.42 }}
+        >
+          {app.iconLetter}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function AppRow({
+  app,
+  isBlocked,
+  isPending,
+  onToggle,
+}: {
+  app: CatalogApp;
+  isBlocked: boolean;
+  isPending: boolean;
+  onToggle: (blocked: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2.5">
+      <AppIcon app={app} size={36} />
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-slate-100">{app.name}</div>
+        <div className="truncate font-mono text-[10px] text-slate-500">{app.packageName}</div>
+      </div>
+      {isBlocked ? (
+        <span className="shrink-0 rounded-full bg-rose-400/10 px-2.5 py-1 text-xs font-semibold text-rose-400">
+          Blocked
+        </span>
+      ) : (
+        <span className="shrink-0 rounded-full bg-accent-teal/10 px-2.5 py-1 text-xs font-semibold text-accent-teal">
+          Allowed
+        </span>
+      )}
+      <button
+        type="button"
+        disabled={isPending}
+        onClick={() => onToggle(!isBlocked)}
+        className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40 ${
+          isBlocked
+            ? 'border border-accent-teal/20 text-accent-teal hover:bg-accent-teal/10'
+            : 'border border-rose-400/20 text-rose-400 hover:bg-rose-400/10'
+        }`}
+      >
+        {isBlocked ? 'Allow' : 'Block'}
+      </button>
+    </div>
+  );
+}
+
 export default function KidsControlCenter({
   profile,
   device,
@@ -335,6 +427,10 @@ export default function KidsControlCenter({
   const [bedtimeWake, setBedtimeWake] = useState({ hour: 7, minute: 0 });
   const [blockedCategories, setBlockedCategories] = useState<Set<string>>(new Set());
   const [newPackage, setNewPackage] = useState('');
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
+    new Set(['Social Media', 'Games & Gaming']),
+  );
+  const [showCustomAppForm, setShowCustomAppForm] = useState(false);
   // Scheduled Blocks
   const [scheduledBlocks, setScheduledBlocks] = useState<ScheduledBlock[]>([]);
   const [showAddBlock, setShowAddBlock] = useState(false);
@@ -567,9 +663,6 @@ export default function KidsControlCenter({
     const blocklist = entryValue(policy, 'kids.blocklist');
     return Array.isArray(blocklist?.packages) ? blocklist.packages : [];
   }, [policy]);
-  const filteredPackages = blockedPackages.filter((pkg) =>
-    pkg.toLowerCase().includes(search.toLowerCase()),
-  );
   const usageMinutes = useMemo(() => {
     const today = todayDateKey();
     const todaySeconds = usageSummaries
@@ -1198,82 +1291,221 @@ export default function KidsControlCenter({
       ) : null}
 
       {activeTab === 'apps' ? (
-        <section className="glass-panel p-5">
-          <div className="mb-5">
-            <h3 className="mb-3 text-sm font-semibold text-slate-100">Block an app</h3>
-            <div className="flex gap-2">
-              <input
-                value={newPackage}
-                onChange={(event) => setNewPackage(event.target.value.trim())}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && newPackage && !blockedPackages.includes(newPackage)) {
-                    patchBlocklist([...blockedPackages, newPackage]);
-                    setNewPackage('');
-                  }
-                }}
-                placeholder="com.example.app"
-                className="min-w-0 flex-1 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2.5 font-mono text-sm text-slate-100 outline-none focus:border-brand-500"
-              />
-              <button
-                type="button"
-                disabled={!newPackage || blockedPackages.includes(newPackage) || patchPolicyMutation.isPending}
-                onClick={() => {
-                  if (newPackage && !blockedPackages.includes(newPackage)) {
-                    patchBlocklist([...blockedPackages, newPackage]);
-                    setNewPackage('');
-                  }
-                }}
-                className="rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-500 disabled:opacity-40"
-              >
-                Block
-              </button>
-            </div>
-            <p className="mt-2 text-xs text-slate-500">
-              Enter the Android package name, e.g. <span className="font-mono text-slate-400">com.tiktok.android</span>
-            </p>
-          </div>
+        <div className="space-y-4">
 
-          <div className="relative mb-4">
+          {/* Search */}
+          <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-500" />
             <input
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search blocked apps"
-              className="w-full rounded-lg border border-white/10 bg-slate-900/40 px-9 py-2.5 text-sm text-slate-100 outline-none focus:border-brand-500"
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search apps by name or package..."
+              className="w-full rounded-xl border border-white/10 bg-slate-900/60 px-9 py-2.5 text-sm text-slate-100 outline-none focus:border-brand-500"
             />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute right-3 top-2.5 text-slate-500 hover:text-slate-300"
+              >
+                ✕
+              </button>
+            )}
           </div>
 
-          {filteredPackages.length ? (
-            <div className="space-y-2">
-              {filteredPackages.map((pkg) => (
-                <div
-                  key={pkg}
-                  className="flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-3"
-                >
-                  <Smartphone className="h-4 w-4 shrink-0 text-rose-400" />
-                  <span className="min-w-0 flex-1 font-mono text-sm text-slate-100">{pkg}</span>
-                  <span className="rounded-full bg-rose-400/10 px-2.5 py-1 text-xs font-semibold text-rose-400">
-                    Blocked
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => patchBlocklist(blockedPackages.filter((item) => item !== pkg))}
-                    disabled={patchPolicyMutation.isPending}
-                    className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-rose-400/10 hover:text-rose-400 disabled:opacity-40"
-                  >
-                    Remove
-                  </button>
+          {search.trim() ? (
+            /* ── Search results ───────────────────────────────────────────── */
+            <section className="glass-panel p-4">
+              <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Search results
+              </h3>
+              {searchApps(search).length > 0 ? (
+                <div className="space-y-2">
+                  {searchApps(search).map((app) => (
+                    <AppRow
+                      key={app.packageName}
+                      app={app}
+                      isBlocked={blockedPackages.includes(app.packageName)}
+                      isPending={patchPolicyMutation.isPending}
+                      onToggle={(shouldBlock) => {
+                        if (shouldBlock) {
+                          patchBlocklist([...blockedPackages, app.packageName]);
+                        } else {
+                          patchBlocklist(blockedPackages.filter((p) => p !== app.packageName));
+                        }
+                      }}
+                    />
+                  ))}
                 </div>
-              ))}
-            </div>
+              ) : (
+                <p className="py-4 text-center text-sm text-slate-500">
+                  No apps match "{search}"
+                </p>
+              )}
+            </section>
           ) : (
-            <EmptyState>
-              {blockedPackages.length === 0
-                ? 'No apps blocked yet. Enter a package name above to block an app.'
-                : 'No blocked apps match your search.'}
-            </EmptyState>
+            <>
+              {/* ── Popular apps ──────────────────────────────────────────── */}
+              <section className="glass-panel p-4">
+                <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  <span>🔥</span> Most Frequently Restricted
+                </h3>
+                <div className="space-y-2">
+                  {POPULAR_APPS.map((app) => (
+                    <AppRow
+                      key={app.packageName}
+                      app={app}
+                      isBlocked={blockedPackages.includes(app.packageName)}
+                      isPending={patchPolicyMutation.isPending}
+                      onToggle={(shouldBlock) => {
+                        if (shouldBlock) {
+                          patchBlocklist([...blockedPackages, app.packageName]);
+                        } else {
+                          patchBlocklist(blockedPackages.filter((p) => p !== app.packageName));
+                        }
+                      }}
+                    />
+                  ))}
+                </div>
+              </section>
+
+              {/* ── Category groups ───────────────────────────────────────── */}
+              {APP_CATEGORIES.map((category) => {
+                const apps = getAppsByCategory()[category];
+                const blockedInCategory = apps.filter((a) => blockedPackages.includes(a.packageName)).length;
+                const isExpanded = expandedCategories.has(category);
+
+                return (
+                  <section key={category} className="glass-panel overflow-hidden">
+                    {/* Category header — click to expand/collapse */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedCategories((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(category)) next.delete(category);
+                          else next.add(category);
+                          return next;
+                        });
+                      }}
+                      className="flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-white/5"
+                    >
+                      <span className="text-base">{CATEGORY_EMOJI[category]}</span>
+                      <span className="flex-1 text-sm font-semibold text-slate-100">{category}</span>
+                      {blockedInCategory > 0 && (
+                        <span className="rounded-full bg-rose-400/10 px-2.5 py-0.5 text-xs font-semibold text-rose-400">
+                          {blockedInCategory} blocked
+                        </span>
+                      )}
+                      <span className="text-xs text-slate-500">{isExpanded ? '▲' : '▼'}</span>
+                    </button>
+
+                    {/* Category app list */}
+                    {isExpanded && (
+                      <div className="space-y-px border-t border-white/5 px-4 pb-4 pt-2">
+                        <div className="space-y-2">
+                          {apps.map((app) => (
+                            <AppRow
+                              key={app.packageName}
+                              app={app}
+                              isBlocked={blockedPackages.includes(app.packageName)}
+                              isPending={patchPolicyMutation.isPending}
+                              onToggle={(shouldBlock) => {
+                                if (shouldBlock) {
+                                  patchBlocklist([...blockedPackages, app.packageName]);
+                                } else {
+                                  patchBlocklist(blockedPackages.filter((p) => p !== app.packageName));
+                                }
+                              }}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
+
+              {/* ── Custom app (power user fallback) ─────────────────────── */}
+              <section className="glass-panel overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setShowCustomAppForm((v) => !v)}
+                  className="flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-white/5"
+                >
+                  <span className="text-base">📦</span>
+                  <span className="flex-1 text-sm font-semibold text-slate-100">Custom app</span>
+                  <span className="text-xs text-slate-500">
+                    {showCustomAppForm ? 'Close ▲' : 'Add by package name ▼'}
+                  </span>
+                </button>
+                {showCustomAppForm && (
+                  <div className="border-t border-white/5 px-4 pb-4 pt-3">
+                    <p className="mb-3 text-xs text-slate-500">
+                      Can't find an app above? Enter its Android package name.
+                    </p>
+                    <div className="flex gap-2">
+                      <input
+                        value={newPackage}
+                        onChange={(e) => setNewPackage(e.target.value.trim())}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && newPackage && !blockedPackages.includes(newPackage)) {
+                            patchBlocklist([...blockedPackages, newPackage]);
+                            setNewPackage('');
+                          }
+                        }}
+                        placeholder="com.example.app"
+                        className="min-w-0 flex-1 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2 font-mono text-sm text-slate-100 outline-none focus:border-brand-500"
+                      />
+                      <button
+                        type="button"
+                        disabled={!newPackage || blockedPackages.includes(newPackage) || patchPolicyMutation.isPending}
+                        onClick={() => {
+                          if (newPackage && !blockedPackages.includes(newPackage)) {
+                            patchBlocklist([...blockedPackages, newPackage]);
+                            setNewPackage('');
+                          }
+                        }}
+                        className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-500 disabled:opacity-40"
+                      >
+                        Block
+                      </button>
+                    </div>
+                    {/* Show custom-added packages (not in catalog) */}
+                    {blockedPackages
+                      .filter((pkg) => !APP_CATALOG.some((a) => a.packageName === pkg))
+                      .map((pkg) => (
+                        <div
+                          key={pkg}
+                          className="mt-2 flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2.5"
+                        >
+                          <div
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-700 text-xs font-bold text-slate-300"
+                          >
+                            📦
+                          </div>
+                          <span className="min-w-0 flex-1 truncate font-mono text-sm text-slate-300">
+                            {pkg}
+                          </span>
+                          <span className="rounded-full bg-rose-400/10 px-2.5 py-1 text-xs font-semibold text-rose-400">
+                            Blocked
+                          </span>
+                          <button
+                            type="button"
+                            disabled={patchPolicyMutation.isPending}
+                            onClick={() => patchBlocklist(blockedPackages.filter((p) => p !== pkg))}
+                            className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-rose-400/10 hover:text-rose-400 disabled:opacity-40"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </section>
+            </>
           )}
-        </section>
+        </div>
       ) : null}
 
       {activeTab === 'web-filter' ? (
