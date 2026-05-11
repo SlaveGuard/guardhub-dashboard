@@ -134,6 +134,14 @@ function minutesLabel(minutes: number) {
   return rest ? `${hours}h ${rest}m` : `${hours}h`;
 }
 
+function usageLabel(minutes: number): string {
+  if (minutes === 0) return '0m';
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (!hours) return `${rest}m`;
+  return rest ? `${hours}h ${rest}m` : `${hours}h`;
+}
+
 function toTimeString(hour: number, minute: number): string {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
@@ -529,7 +537,7 @@ export default function KidsControlCenter({
           {
             key: entry.key,
             value: entry.value,
-            strength: entry.strength ?? 'soft',
+            strength: entry.strength ?? 'hard',
             operation: 'upsert',
           },
         ],
@@ -606,6 +614,23 @@ export default function KidsControlCenter({
   const usageSummaries = useMemo(() => parseUsageSummaries(auditEntries), [auditEntries]);
   const blockedEvents = useMemo(() => parseBlockedEvents(auditEntries), [auditEntries]);
   const latestHeartbeat = useMemo(() => parseLatestHeartbeat(auditEntries), [auditEntries]);
+
+  useEffect(() => {
+    console.log('[KidsControlCenter] device object:', {
+      id: device.id,
+      adminActive: device.adminActive,
+      protectionActive: device.protectionActive,
+      lockdownActive: device.lockdownActive,
+      lastSeen: device.lastSeen,
+    });
+    console.log('[KidsControlCenter] latestHeartbeat:', latestHeartbeat);
+    console.log('[KidsControlCenter] auditEntries count:', auditEntries.length);
+    console.log(
+      '[KidsControlCenter] kids.heartbeat count:',
+      auditEntries.filter((entry) => entry.action === 'kids.heartbeat').length,
+    );
+  }, [device, latestHeartbeat, auditEntries]);
+
   const weeklyBars = useMemo(
     () => buildWeeklyUsageBars(usageSummaries, dailyLimitMinutes),
     [usageSummaries, dailyLimitMinutes],
@@ -688,30 +713,34 @@ export default function KidsControlCenter({
       }).length,
     };
   }, [usageSummaries, todayBlocked, alerts]);
-  const deviceHealthItems = useMemo<DeviceHealthItem[]>(() => [
-    {
-      label: 'Device Admin',
-      active: device.adminActive === true || latestHeartbeat?.permissions?.deviceAdmin === true,
-      Icon: ShieldCheck,
-    },
-    {
-      label: 'Usage Access',
-      active: latestHeartbeat?.permissions?.usageAccess === true,
-      Icon: Activity,
-    },
-    {
-      label: 'Accessibility',
-      active: latestHeartbeat?.permissions?.accessibilityFallback === true,
-      Icon: Accessibility,
-    },
-    {
-      label: 'Battery exempt',
-      active: latestHeartbeat?.permissions?.batteryOptimizationIgnored === true,
-      Icon: Battery,
-    },
-  ], [device.adminActive, latestHeartbeat]);
+  const deviceHealthItems = useMemo<DeviceHealthItem[]>(() => {
+    // Primary source: device fields written directly by heartbeat. Fallback to
+    // audit heartbeat permissions when those entries are linked to this app.
+    const adminActive =
+      device.adminActive === true ||
+      latestHeartbeat?.permissions?.deviceAdmin === true;
+
+    const usageAccess =
+      latestHeartbeat?.permissions?.usageAccess === true;
+
+    const accessibility =
+      latestHeartbeat?.permissions?.accessibilityFallback === true;
+
+    const batteryExempt =
+      latestHeartbeat?.permissions?.batteryOptimizationIgnored === true;
+
+    return [
+      { label: 'Device Admin', active: adminActive, Icon: ShieldCheck },
+      { label: 'Usage Access', active: usageAccess, Icon: Activity },
+      { label: 'Accessibility', active: accessibility, Icon: Accessibility },
+      { label: 'Battery exempt', active: batteryExempt, Icon: Battery },
+    ];
+  }, [device.adminActive, latestHeartbeat]);
+  const hasRecentHeartbeat = !!device.lastSeen &&
+    (Date.now() - new Date(device.lastSeen).getTime()) < 10 * 60 * 1000;
   const deviceAdminConfirmedInactive =
-    device.adminActive === false && latestHeartbeat?.permissions?.deviceAdmin === false;
+    (hasRecentHeartbeat && device.adminActive === false) ||
+    latestHeartbeat?.permissions?.deviceAdmin === false;
 
   const patchBlocklist = (packages: string[]) => {
     patchPolicyMutation.mutate({
@@ -725,7 +754,6 @@ export default function KidsControlCenter({
     patchPolicyMutation.mutate({
       key: 'kids.screen_time.per_app',
       value: next,
-      strength: 'soft',
     });
   };
 
@@ -854,7 +882,9 @@ export default function KidsControlCenter({
           <section className="glass-panel p-5">
             <div className="flex items-center justify-between text-sm">
               <span className="font-medium text-slate-100">Today's usage</span>
-              <span className="text-brand-400">{minutesLabel(usageMinutes)} / {minutesLabel(dailyLimitMinutes)}</span>
+              <span className="text-brand-400">
+                {`${usageLabel(usageMinutes)} used${dailyLimitMinutes > 0 ? ` / ${minutesLabel(dailyLimitMinutes)} limit` : ' · No limit set'}`}
+              </span>
             </div>
             <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
               <div className="h-full rounded-full bg-brand-500" style={{ width: `${usagePercent}%` }} />
@@ -895,9 +925,22 @@ export default function KidsControlCenter({
                 )}
                 <span className="ml-auto">Last seen {new Date(latestHeartbeat.receivedAt).toLocaleString()}</span>
               </div>
+            ) : device.lastSeen ? (
+              <div className="mt-3 text-xs">
+                {deviceHealthItems.some((h) => !h.active) ? (
+                  <p className="text-amber-400">
+                    ⚠ Some permissions need to be granted on the child's device.
+                    Open GuardHUB Kids → tap Permissions to enable them.
+                  </p>
+                ) : (
+                  <p className="text-slate-500">
+                    Device is protected · Last seen {new Date(device.lastSeen).toLocaleString()}
+                  </p>
+                )}
+              </div>
             ) : (
               <p className="mt-2 text-xs text-slate-500">
-                Waiting for first heartbeat. The device reports every 30 minutes.
+                Waiting for first heartbeat. The device reports every 5 minutes.
               </p>
             )}
           </section>
@@ -1004,7 +1047,6 @@ export default function KidsControlCenter({
                 patchPolicyMutation.mutate({
                   key: 'kids.screen_time.daily_limit',
                   value: { enabled: dailyLimitHours > 0, minutes: dailyLimitHours * 60 },
-                  strength: 'soft',
                 });
               return (
                 <input

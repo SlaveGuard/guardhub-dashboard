@@ -497,12 +497,20 @@ export default function DevicesRedesignScreen() {
     refetchInterval: view.mode === 'kids-control' ? 30_000 : false,
   });
 
+  const selectedDevice =
+    selectedProfile && (view.mode === 'kids-control' || view.mode === 'guardscreen')
+      ? (selectedProfile.devices ?? []).find((device: AnyRecord) => device.id === view.deviceId)
+      : null;
+
   const { data: liveDevice } = useQuery<AnyRecord>({
     queryKey: ['device', view.mode === 'kids-control' ? view.deviceId : null],
     queryFn: async () =>
       (await apiClient.get(`/devices/${view.mode === 'kids-control' ? view.deviceId : ''}`)).data,
     enabled: view.mode === 'kids-control' && !!view.deviceId,
     refetchInterval: 30_000,
+    // Seed from the profile's device data immediately; the dedicated device query
+    // then refreshes adminActive and other heartbeat fields every 30 seconds.
+    initialData: selectedDevice ?? undefined,
   });
 
   const totalDevices = useMemo(
@@ -609,10 +617,6 @@ export default function DevicesRedesignScreen() {
     });
   };
 
-  const selectedDevice =
-    selectedProfile && (view.mode === 'kids-control' || view.mode === 'guardscreen')
-      ? (selectedProfile.devices ?? []).find((device: AnyRecord) => device.id === view.deviceId)
-      : null;
   const selectedInstallation =
     selectedDevice && (view.mode === 'kids-control' || view.mode === 'guardscreen')
       ? (selectedDevice.appInstallations ?? []).find((installation: AnyRecord) => {
