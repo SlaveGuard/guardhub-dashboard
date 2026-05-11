@@ -7,6 +7,7 @@ import {
   Battery,
   Clock,
   Lock,
+  MapPin,
   Pause,
   RefreshCcw,
   Search,
@@ -54,9 +55,23 @@ interface KidsHeartbeat {
     notifications?: boolean;
     batteryOptimizationIgnored?: boolean;
     accessibilityFallback?: boolean;
+    location?: boolean;
+    backgroundLocation?: boolean;
   } | null;
   lastSyncEpochMillis: number | null;
+  location: KidsLocation | null;
   receivedAt: string;
+}
+
+interface KidsLocation {
+  latitude: number;
+  longitude: number;
+  accuracyMeters?: number | null;
+  altitudeMeters?: number | null;
+  speedMetersPerSecond?: number | null;
+  bearingDegrees?: number | null;
+  capturedAtEpochMillis?: number | null;
+  provider?: string | null;
 }
 
 interface DeviceHealthItem {
@@ -238,8 +253,46 @@ function parseLatestHeartbeat(auditEntries: AnyRecord[]): KidsHeartbeat | null {
     managementMode: latest.details.managementMode ?? null,
     permissions: latest.details.permissions ?? null,
     lastSyncEpochMillis: latest.details.lastSyncEpochMillis ?? null,
+    location: normalizeLocation(latest.details.location),
     receivedAt: String(latest.createdAt ?? ''),
   };
+}
+
+function normalizeLocation(value: unknown): KidsLocation | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as AnyRecord;
+  const latitude = Number(record.latitude);
+  const longitude = Number(record.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return {
+    latitude,
+    longitude,
+    accuracyMeters: optionalNumber(record.accuracyMeters),
+    altitudeMeters: optionalNumber(record.altitudeMeters),
+    speedMetersPerSecond: optionalNumber(record.speedMetersPerSecond),
+    bearingDegrees: optionalNumber(record.bearingDegrees),
+    capturedAtEpochMillis: optionalNumber(record.capturedAtEpochMillis),
+    provider: typeof record.provider === 'string' ? record.provider : null,
+  };
+}
+
+function optionalNumber(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function formatCoordinate(value: number) {
+  return value.toFixed(5);
+}
+
+function formatAccuracy(value?: number | null) {
+  if (!value) return 'Accuracy unknown';
+  return `Accuracy ${Math.round(value)}m`;
+}
+
+function mapsUrl(location: KidsLocation) {
+  return `https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}`;
 }
 
 function buildWeeklyUsageBars(
@@ -642,6 +695,7 @@ export default function KidsControlCenter({
     );
   }, [device, latestHeartbeat, auditEntries, remoteLockActive]);
 
+  const latestLocation = normalizeLocation(device.latestLocation) ?? latestHeartbeat?.location ?? null;
   const weeklyBars = useMemo(
     () => buildWeeklyUsageBars(usageSummaries, dailyLimitMinutes),
     [usageSummaries, dailyLimitMinutes],
@@ -745,8 +799,9 @@ export default function KidsControlCenter({
       { label: 'Usage Access', active: usageAccess, Icon: Activity },
       { label: 'Accessibility', active: accessibility, Icon: Accessibility },
       { label: 'Battery exempt', active: batteryExempt, Icon: Battery },
+      { label: 'Location', active: Boolean(latestLocation), Icon: MapPin },
     ];
-  }, [device.adminActive, latestHeartbeat]);
+  }, [device.adminActive, latestHeartbeat, latestLocation]);
   const hasRecentHeartbeat = !!device.lastSeen &&
     (Date.now() - new Date(device.lastSeen).getTime()) < 10 * 60 * 1000;
   const deviceAdminConfirmedInactive =
@@ -902,8 +957,45 @@ export default function KidsControlCenter({
             </div>
           </section>
           <section className="glass-panel p-5">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent-teal/10 text-accent-teal">
+                  <MapPin className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-100">Live location</h3>
+                  {latestLocation ? (
+                    <p className="mt-1 text-xs text-slate-500">
+                      {formatCoordinate(latestLocation.latitude)}, {formatCoordinate(latestLocation.longitude)} .{' '}
+                      {formatAccuracy(latestLocation.accuracyMeters)}
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-slate-500">Waiting for location from the child device.</p>
+                  )}
+                </div>
+              </div>
+              {latestLocation ? (
+                <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                  <span>
+                    {latestLocation.capturedAtEpochMillis
+                      ? new Date(latestLocation.capturedAtEpochMillis).toLocaleString()
+                      : 'Time unknown'}
+                  </span>
+                  <a
+                    href={mapsUrl(latestLocation)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-lg border border-accent-teal/30 px-3 py-2 font-medium text-accent-teal hover:bg-accent-teal/10"
+                  >
+                    Open map
+                  </a>
+                </div>
+              ) : null}
+            </div>
+          </section>
+          <section className="glass-panel p-5">
             <h3 className="mb-3 text-sm font-semibold text-slate-100">Device protection status</h3>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
               {deviceHealthItems.map(({ label, active, Icon }) => (
                 <div
                   key={label}
