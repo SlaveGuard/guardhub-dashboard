@@ -1,11 +1,27 @@
 import { NavLink, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { LayoutDashboard, Users, ShieldAlert, Settings, LogOut, Activity, Siren, CreditCard } from 'lucide-react';
+import { apiClient } from '../api/client';
 import { useAuthStore } from '../store/authStore';
 
 export default function Sidebar() {
   const logout = useAuthStore(state => state.logout);
   const user = useAuthStore(state => state.user);
   const navigate = useNavigate();
+  const { data: unreadCount = 0 } = useQuery<number>({
+    queryKey: ['alerts', 'unread-count'],
+    queryFn: async () => {
+      const res = await apiClient.get('/alerts');
+      const items: Array<{ isRead?: boolean }> = Array.isArray(res.data)
+        ? res.data
+        : (res.data?.items ?? []);
+      return items.filter((a) => !a.isRead).length;
+    },
+    enabled: !!user,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    retry: false,
+  });
 
   const handleLogout = () => {
     logout();
@@ -47,6 +63,11 @@ export default function Sidebar() {
           >
             <item.icon className="w-5 h-5" />
             <span className="font-medium">{item.name}</span>
+            {item.path === '/alerts' && unreadCount > 0 && (
+              <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[10px] font-bold text-white">
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>

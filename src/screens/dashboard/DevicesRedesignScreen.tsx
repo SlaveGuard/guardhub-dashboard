@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, PauseCircle, PlayCircle, Plus, ShieldCheck, Users, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, PauseCircle, PlayCircle, Plus, ShieldCheck, Trash2, Users, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { apiClient } from '../../api/client';
 import Breadcrumb from '../../components/Breadcrumb';
@@ -19,6 +19,12 @@ type ScreenView =
   | { mode: 'kids-control'; profileId: string; deviceId: string; deviceName: string }
   | { mode: 'guardscreen'; profileId: string; deviceId: string; deviceName: string };
 type RemovalConfirmation =
+  | {
+      kind: 'profile';
+      profileId: string;
+      title: string;
+      description: string;
+    }
   | {
       kind: 'device';
       profileId: string;
@@ -423,7 +429,13 @@ function RemoveConfirmationDialog({
             disabled={pending}
             className="rounded-lg bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {pending ? 'Removing...' : confirmation.kind === 'device' ? 'Remove Device' : 'Remove App'}
+            {pending
+              ? 'Removing...'
+              : confirmation.kind === 'profile'
+                ? 'Delete Profile'
+                : confirmation.kind === 'device'
+                  ? 'Remove Device'
+                  : 'Remove App'}
           </button>
         </div>
       </div>
@@ -485,12 +497,20 @@ export default function DevicesRedesignScreen() {
     refetchInterval: view.mode === 'kids-control' ? 30_000 : false,
   });
 
+  const selectedDevice =
+    selectedProfile && (view.mode === 'kids-control' || view.mode === 'guardscreen')
+      ? (selectedProfile.devices ?? []).find((device: AnyRecord) => device.id === view.deviceId)
+      : null;
+
   const { data: liveDevice } = useQuery<AnyRecord>({
     queryKey: ['device', view.mode === 'kids-control' ? view.deviceId : null],
     queryFn: async () =>
       (await apiClient.get(`/devices/${view.mode === 'kids-control' ? view.deviceId : ''}`)).data,
     enabled: view.mode === 'kids-control' && !!view.deviceId,
     refetchInterval: 30_000,
+    // Seed from the profile's device data immediately; the dedicated device query
+    // then refreshes adminActive and other heartbeat fields every 30 seconds.
+    initialData: selectedDevice ?? undefined,
   });
 
   const totalDevices = useMemo(
@@ -543,6 +563,10 @@ export default function DevicesRedesignScreen() {
       queryClient.invalidateQueries({ queryKey: ['profiles', 'archived'] });
       queryClient.invalidateQueries({ queryKey: ['profile', payload.profileId] });
       queryClient.invalidateQueries({ queryKey: ['subscription', 'limits'] });
+      if (payload.action === 'delete') {
+        setRemovalConfirmation(null);
+        setView({ mode: 'list' });
+      }
       toast.success(`Profile ${pastTense(payload.action)}.`);
     },
     onError: (error: AnyRecord) => showPlanLimitToast(error, 'Profile action failed', navigate),
@@ -593,10 +617,6 @@ export default function DevicesRedesignScreen() {
     });
   };
 
-  const selectedDevice =
-    selectedProfile && (view.mode === 'kids-control' || view.mode === 'guardscreen')
-      ? (selectedProfile.devices ?? []).find((device: AnyRecord) => device.id === view.deviceId)
-      : null;
   const selectedInstallation =
     selectedDevice && (view.mode === 'kids-control' || view.mode === 'guardscreen')
       ? (selectedDevice.appInstallations ?? []).find((installation: AnyRecord) => {
@@ -647,8 +667,27 @@ export default function DevicesRedesignScreen() {
     });
   };
 
+  const handleDeleteProfile = () => {
+    if (!selectedProfile) return;
+
+    setRemovalConfirmation({
+      kind: 'profile',
+      profileId: selectedProfile.id,
+      title: `Delete ${selectedProfile.name}?`,
+      description: 'This permanently deletes the child profile. Profiles with linked devices must have those devices removed first.',
+    });
+  };
+
   const confirmRemoval = () => {
     if (!removalConfirmation) return;
+
+    if (removalConfirmation.kind === 'profile') {
+      lifecycleMutation.mutate({
+        profileId: removalConfirmation.profileId,
+        action: 'delete',
+      });
+      return;
+    }
 
     if (removalConfirmation.kind === 'device') {
       removeDeviceMutation.mutate({
@@ -665,7 +704,7 @@ export default function DevicesRedesignScreen() {
     });
   };
 
-  const removalPending = removeDeviceMutation.isPending || removeAppMutation.isPending;
+  const removalPending = removeDeviceMutation.isPending || removeAppMutation.isPending || lifecycleMutation.isPending;
 
   if (familyLoading) {
     return (
@@ -880,6 +919,20 @@ export default function DevicesRedesignScreen() {
                 >
                   <Plus className="h-4 w-4" />
                   Link Device
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteProfile}
+                  disabled={lifecycleMutation.isPending || getDeviceCount(selectedProfile) > 0}
+                  title={
+                    getDeviceCount(selectedProfile) > 0
+                      ? 'Remove linked devices before deleting this profile'
+                      : `Delete ${selectedProfile.name}`
+                  }
+                  className="inline-flex items-center gap-2 rounded-lg border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-sm font-medium text-rose-400 transition-colors hover:bg-rose-400/15 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete Profile
                 </button>
               </div>
             </div>
