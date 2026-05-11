@@ -183,21 +183,26 @@ function Toggle({
 }
 
 function parseUsageSummaries(auditEntries: AnyRecord[]): KidsUsageSummary[] {
-  const summaries: KidsUsageSummary[] = [];
-  for (const entry of auditEntries) {
+  const latestByPackageAndDate = new Map<string, KidsUsageSummary & { reportedAt: number }>();
+  for (const entry of [...auditEntries].sort(
+    (a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime(),
+  )) {
     if (entry.action !== 'kids.usage_reported') continue;
     const items: AnyRecord[] = entry.details?.summaries ?? [];
+    const reportedAt = new Date(entry.createdAt ?? entry.details?.reportedAt ?? 0).getTime();
     for (const item of items) {
       if (typeof item.packageName === 'string' && typeof item.usageSeconds === 'number') {
-        summaries.push({
+        const dateKey = String(item.dateKey ?? entry.details?.dateKey ?? '');
+        latestByPackageAndDate.set(`${dateKey}:${item.packageName}`, {
           packageName: item.packageName,
-          dateKey: String(item.dateKey ?? entry.details?.dateKey ?? ''),
+          dateKey,
           usageSeconds: Number(item.usageSeconds),
+          reportedAt,
         });
       }
     }
   }
-  return summaries;
+  return [...latestByPackageAndDate.values()].map(({ reportedAt: _reportedAt, ...summary }) => summary);
 }
 
 function parseBlockedEvents(auditEntries: AnyRecord[]): KidsBlockedEvent[] {
@@ -427,7 +432,8 @@ export default function KidsControlCenter({
     refetchInterval: 60_000,
   });
 
-  const dailyLimitMinutes = Number(entryValue(policy, 'kids.screen_time.daily_limit')?.minutes ?? 120);
+  const dailyLimitValue = entryValue(policy, 'kids.screen_time.daily_limit');
+  const dailyLimitMinutes = Number(dailyLimitValue?.minutes ?? dailyLimitValue?.limitMinutes ?? 0);
   const [dailyLimitHours, setDailyLimitHours] = useState(Math.round(dailyLimitMinutes / 60));
   const [bedtimeEnabled, setBedtimeEnabled] = useState(Boolean(entryValue(policy, 'kids.bedtime')?.enabled ?? false));
   const [bedtimeDays, setBedtimeDays] = useState<number[]>([0, 1, 2, 3, 4]);
@@ -611,6 +617,10 @@ export default function KidsControlCenter({
       limitMinutes: Number(limitMinutes ?? 0),
     }));
   }, [policy]);
+  const remoteLockValue = entryValue(policy, 'kids.remote_lock');
+  const remoteLockActive = Boolean(
+    remoteLockValue?.enabled ?? remoteLockValue?.locked ?? device.lockdownActive,
+  );
   const usageSummaries = useMemo(() => parseUsageSummaries(auditEntries), [auditEntries]);
   const blockedEvents = useMemo(() => parseBlockedEvents(auditEntries), [auditEntries]);
   const latestHeartbeat = useMemo(() => parseLatestHeartbeat(auditEntries), [auditEntries]);
@@ -621,6 +631,7 @@ export default function KidsControlCenter({
       adminActive: device.adminActive,
       protectionActive: device.protectionActive,
       lockdownActive: device.lockdownActive,
+      effectiveRemoteLockActive: remoteLockActive,
       lastSeen: device.lastSeen,
     });
     console.log('[KidsControlCenter] latestHeartbeat:', latestHeartbeat);
@@ -629,7 +640,7 @@ export default function KidsControlCenter({
       '[KidsControlCenter] kids.heartbeat count:',
       auditEntries.filter((entry) => entry.action === 'kids.heartbeat').length,
     );
-  }, [device, latestHeartbeat, auditEntries]);
+  }, [device, latestHeartbeat, auditEntries, remoteLockActive]);
 
   const weeklyBars = useMemo(
     () => buildWeeklyUsageBars(usageSummaries, dailyLimitMinutes),
@@ -794,7 +805,7 @@ export default function KidsControlCenter({
               <h2 className="text-lg font-semibold text-slate-100">{profile.name}'s Device</h2>
               <p className="mt-1 text-xs text-slate-400">{deviceName(device)} . GuardHub Kids . {device.platform || device.type || 'Android'}</p>
               <p className="mt-1 flex items-center gap-2 text-xs">
-                {device.lockdownActive ? (
+                {remoteLockActive ? (
                   <span className="flex items-center gap-1 text-rose-400">
                     <span className="inline-block h-2 w-2 rounded-full bg-rose-400" />
                     Locked
@@ -828,7 +839,7 @@ export default function KidsControlCenter({
               <Pause className="h-4 w-4" />
               Pause
             </button>
-            {device.lockdownActive ? (
+            {remoteLockActive ? (
               <button
                 type="button"
                 onClick={() => unlockMutation.mutate()}
