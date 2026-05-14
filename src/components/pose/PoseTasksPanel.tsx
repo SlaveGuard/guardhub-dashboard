@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  AlertTriangle,
   ArrowLeft,
   BarChart3,
   CheckCircle2,
   Clock3,
   ImagePlus,
+  Trash2,
   Upload,
+  X,
   XCircle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -59,8 +62,8 @@ type PoseSessionTick = {
 };
 
 const cameraOptions = [
-  { label: 'Front', value: 'front' },
-  { label: 'Rear', value: 'rear' },
+  { label: 'Face camera', value: 'front' },
+  { label: 'Face wall', value: 'rear' },
   { label: 'Let child choose', value: 'child_choice' },
 ];
 
@@ -117,6 +120,7 @@ export function PoseTasksPanel({
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [selectedTask, setSelectedTask] = useState<PoseTask | null>(null);
+  const [taskPendingDelete, setTaskPendingDelete] = useState<PoseTask | null>(null);
 
   const tasksQueryKey = ['poseTasks', profileId];
   const { data: allTasks = [], isLoading } = useQuery<PoseTask[]>({
@@ -164,6 +168,21 @@ export function PoseTasksPanel({
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.message || error.message || 'Failed to assign pose task');
+    },
+  });
+
+  const deleteTaskMutation = useMutation({
+    mutationFn: async (taskId: string) => (await apiClient.delete(`/pose/tasks/${taskId}`)).data,
+    onSuccess: (_data, taskId) => {
+      toast.success('Pose task deleted.');
+      setTaskPendingDelete(null);
+      if (selectedTask?.id === taskId) {
+        setSelectedTask(null);
+      }
+      queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.message || error.message || 'Failed to delete pose task');
     },
   });
 
@@ -328,14 +347,14 @@ export function PoseTasksPanel({
                 />
               </label>
               <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                Camera
-                <div className="mt-2 grid grid-cols-3 gap-2">
+                Pose direction
+                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
                   {cameraOptions.map((option) => (
                     <button
                       key={option.value}
                       type="button"
                       onClick={() => setCameraPreference(option.value)}
-                      className={`rounded-xl px-3 py-2 text-xs font-semibold border ${
+                      className={`min-h-12 rounded-xl border px-4 py-3 text-sm font-semibold transition-all ${
                         cameraPreference === option.value
                           ? 'border-brand-500 bg-brand-500/10 text-brand-600 dark:text-brand-300'
                           : 'border-slate-200 dark:border-white/10 text-slate-600 dark:text-slate-300'
@@ -472,15 +491,28 @@ export function PoseTasksPanel({
                             ) : null}
                           </div>
                         </div>
-                        {task.status === 'completed' && task.session?.id ? (
-                          <button
-                            type="button"
-                            onClick={() => setSelectedTask(task)}
-                            className="btn-secondary py-2 px-3 text-sm"
-                          >
-                            View Report
-                          </button>
-                        ) : null}
+                        <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+                          {task.status === 'completed' && task.session?.id ? (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedTask(task)}
+                              className="btn-secondary py-2 px-3 text-sm"
+                            >
+                              View Report
+                            </button>
+                          ) : null}
+                          {editable ? (
+                            <button
+                              type="button"
+                              onClick={() => setTaskPendingDelete(task)}
+                              disabled={deleteTaskMutation.isPending}
+                              className="btn-danger inline-flex items-center gap-2 py-2 px-3 text-sm"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Delete
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                   ))
@@ -490,6 +522,59 @@ export function PoseTasksPanel({
           )}
         </div>
       </div>
+
+      {taskPendingDelete ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 px-4 py-6 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-pose-task-title"
+            className="w-full max-w-md rounded-2xl border border-white/10 bg-slate-900 p-5 shadow-2xl shadow-black/40"
+          >
+            <div className="flex items-start gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-rose-400/20 bg-rose-400/10 text-rose-400">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 id="delete-pose-task-title" className="text-base font-semibold text-slate-100">
+                  Delete {taskPendingDelete.name}?
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-slate-400">
+                  This permanently removes the task and any session report from the task list.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTaskPendingDelete(null)}
+                disabled={deleteTaskMutation.isPending}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-white/10 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="Close delete confirmation"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setTaskPendingDelete(null)}
+                disabled={deleteTaskMutation.isPending}
+                className="rounded-lg border border-white/10 px-4 py-2.5 text-sm font-medium text-slate-300 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteTaskMutation.mutate(taskPendingDelete.id)}
+                disabled={deleteTaskMutation.isPending}
+                className="rounded-lg bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {deleteTaskMutation.isPending ? 'Deleting...' : 'Delete Task'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
