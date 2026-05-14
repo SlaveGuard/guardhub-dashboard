@@ -1,4 +1,4 @@
-import { ChevronRight, Shield, Smartphone, Trash2 } from 'lucide-react';
+import { Activity, ChevronRight, Shield, Smartphone, Trash2 } from 'lucide-react';
 
 type AnyRecord = Record<string, any>;
 
@@ -33,6 +33,14 @@ function appTone(slug: string) {
       bg: 'bg-brand-500/10',
       icon: <Smartphone className="h-4 w-4" />,
       sub: 'Screen time and app management',
+    };
+  }
+  if (slug.includes('guardstance')) {
+    return {
+      text: 'text-emerald-400',
+      bg: 'bg-emerald-400/10',
+      icon: <Activity className="h-4 w-4" />,
+      sub: 'Posture and focus tasks',
     };
   }
   return {
@@ -113,7 +121,7 @@ export default function LinkedDeviceGroup({
                 <button
                   type="button"
                   onClick={() => {
-                    if (!slug.includes('guardhub-kids') && !slug.includes('guardscreen')) {
+                    if (!slug.includes('guardhub-kids') && !slug.includes('guardscreen') && !slug.includes('guardstance')) {
                       // TODO: Route unknown app catalog slugs to a generic app detail view when that screen exists.
                     }
                     onOpenApp(device, installation);

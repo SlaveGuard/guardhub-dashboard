@@ -9,6 +9,7 @@ import GuardScreenDeviceView from '../../components/GuardScreenDeviceView';
 import KidsControlCenter from '../../components/KidsControlCenter';
 import LinkedDeviceGroup from '../../components/LinkedDeviceGroup';
 import PairingCodeGenerator from '../../components/PairingCodeGenerator';
+import { PoseTasksPanel } from '../../components/pose/PoseTasksPanel';
 import { showPlanLimitToast } from '../../lib/planLimitToast';
 
 type Family = { id: string; name: string } | null;
@@ -17,7 +18,8 @@ type ScreenView =
   | { mode: 'list' }
   | { mode: 'detail'; profileId: string }
   | { mode: 'kids-control'; profileId: string; deviceId: string; deviceName: string }
-  | { mode: 'guardscreen'; profileId: string; deviceId: string; deviceName: string };
+  | { mode: 'guardscreen'; profileId: string; deviceId: string; deviceName: string }
+  | { mode: 'guardstance'; profileId: string; deviceId: string; deviceName: string };
 type RemovalConfirmation =
   | {
       kind: 'profile';
@@ -498,7 +500,7 @@ export default function DevicesRedesignScreen() {
   });
 
   const selectedDevice =
-    selectedProfile && (view.mode === 'kids-control' || view.mode === 'guardscreen')
+    selectedProfile && (view.mode === 'kids-control' || view.mode === 'guardscreen' || view.mode === 'guardstance')
       ? (selectedProfile.devices ?? []).find((device: AnyRecord) => device.id === view.deviceId)
       : null;
 
@@ -618,10 +620,12 @@ export default function DevicesRedesignScreen() {
   };
 
   const selectedInstallation =
-    selectedDevice && (view.mode === 'kids-control' || view.mode === 'guardscreen')
+    selectedDevice && (view.mode === 'kids-control' || view.mode === 'guardscreen' || view.mode === 'guardstance')
       ? (selectedDevice.appInstallations ?? []).find((installation: AnyRecord) => {
           const slug = String(installation.appCatalog?.slug || '').toLowerCase();
-          return view.mode === 'kids-control' ? slug.includes('guardhub-kids') : slug.includes('guardscreen');
+          if (view.mode === 'kids-control') return slug.includes('guardhub-kids');
+          if (view.mode === 'guardscreen') return slug.includes('guardscreen');
+          return slug.includes('guardstance');
         })
       : null;
   const deviceForKids = view.mode === 'kids-control' ? (liveDevice ?? selectedDevice) : selectedDevice;
@@ -636,6 +640,10 @@ export default function DevicesRedesignScreen() {
     }
     if (slug.includes('guardscreen')) {
       setView({ mode: 'guardscreen', profileId: selectedProfile.id, deviceId: device.id, deviceName: name });
+      return;
+    }
+    if (slug.includes('guardstance')) {
+      setView({ mode: 'guardstance', profileId: selectedProfile.id, deviceId: device.id, deviceName: name });
     }
   };
 
@@ -1020,6 +1028,28 @@ export default function DevicesRedesignScreen() {
           />
           {selectedDevice && selectedInstallation ? (
             <GuardScreenDeviceView device={selectedDevice} installation={selectedInstallation} />
+          ) : (
+            <MissingInstallation />
+          )}
+        </div>
+      ) : null}
+
+      {view.mode === 'guardstance' && selectedProfile ? (
+        <div className="space-y-5">
+          <Breadcrumb
+            items={[
+              { label: 'Profiles', onClick: () => setView({ mode: 'list' }) },
+              { label: selectedProfile.name, onClick: () => setView({ mode: 'detail', profileId: selectedProfile.id }) },
+              { label: view.deviceName, onClick: () => setView({ mode: 'detail', profileId: selectedProfile.id }) },
+              { label: 'GuardStance' },
+            ]}
+          />
+          {selectedDevice && selectedInstallation ? (
+            <PoseTasksPanel
+              installationId={selectedInstallation.id}
+              profileId={selectedProfile.id}
+              editable={selectedProfile.status !== 'archived' && selectedProfile.status !== 'deleted'}
+            />
           ) : (
             <MissingInstallation />
           )}
