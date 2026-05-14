@@ -21,6 +21,7 @@ import {
 import toast from 'react-hot-toast';
 import { apiClient } from '../../api/client';
 import { logger } from '../../lib/logger';
+import { PoseTasksPanel } from '../../components/pose/PoseTasksPanel';
 
 type Family = { id: string; name: string } | null;
 type AnyRecord = Record<string, any>;
@@ -1756,6 +1757,15 @@ export default function DevicesScreen() {
                                     defaultTab="activity"
                                   />
                                 </div>
+                                {installation.appCatalog.slug === 'guardstance-android' && (
+                                  <div className="mt-4">
+                                    <PoseTasksPanel
+                                      installationId={installation.id}
+                                      profileId={selectedProfile.id}
+                                      editable={selectedProfile.status !== 'archived' && selectedProfile.status !== 'deleted'}
+                                    />
+                                  </div>
+                                )}
                                 {allTransferTargetDevices.length > 1 ? (
                                   <div className="mt-4 rounded-xl border border-slate-200 dark:border-white/10 p-4 space-y-3">
                                     <div className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
