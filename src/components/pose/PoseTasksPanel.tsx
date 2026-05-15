@@ -24,6 +24,7 @@ import {
   YAxis,
 } from 'recharts';
 import { apiClient } from '../../api/client';
+import { PoseSkeleton3D } from './PoseSkeleton3D';
 
 type PoseTasksPanelProps = {
   installationId: string;
@@ -38,7 +39,22 @@ type PoseTask = {
   durationSeconds: number;
   status: string;
   similarityThreshold: number;
+  imageUrl: string;
+  keypoints?: Keypoint[] | null;
+  imageUrls?: string[] | null;
   session?: PoseSession | null;
+};
+
+type Keypoint = {
+  index: number;
+  x?: number;
+  y?: number;
+  wx?: number;
+  wy?: number;
+  wz?: number;
+  visibility?: number;
+  estimated?: boolean;
+  absent?: boolean;
 };
 
 type PoseSession = {
@@ -113,6 +129,54 @@ function getTaskGroups(tasks: PoseTask[]) {
   ];
 }
 
+function getReferenceImageUrls(task: PoseTask) {
+  return task.imageUrls?.length ? task.imageUrls : [task.imageUrl];
+}
+
+function PoseTaskReferencePreview({
+  task,
+  skeletonHeight = 220,
+}: {
+  task: PoseTask;
+  skeletonHeight?: number;
+}) {
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div>
+        <p className="mb-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+          Reference Photos
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {getReferenceImageUrls(task).map((url, i) => (
+            <img
+              key={`${url}-${i}`}
+              src={url}
+              alt={`Reference ${i + 1}`}
+              className="h-24 w-24 rounded-lg object-cover border border-slate-200 dark:border-white/10"
+            />
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+          3D Pose Preview
+          <span className="ml-1 font-normal text-slate-400">— rotate to verify angle</span>
+        </p>
+        {task.keypoints?.length ? (
+          <PoseSkeleton3D keypoints={task.keypoints} height={skeletonHeight} />
+        ) : (
+          <div className="flex h-28 items-center justify-center rounded-lg border border-dashed border-slate-300 text-xs text-slate-400 dark:border-white/10">
+            {task.status === 'extraction_failed'
+              ? 'Extraction failed — re-upload images'
+              : 'Processing keypoints…'}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function PoseTasksPanel({
   installationId,
   profileId,
@@ -133,17 +197,30 @@ export function PoseTasksPanel({
   const imagePreviewsRef = useRef<(string | null)[]>(createEmptyImageSlots<string>());
   const [selectedTask, setSelectedTask] = useState<PoseTask | null>(null);
   const [taskPendingDelete, setTaskPendingDelete] = useState<PoseTask | null>(null);
+  const [createdPreviewTaskId, setCreatedPreviewTaskId] = useState<string | null>(null);
 
   const tasksQueryKey = ['poseTasks', profileId];
   const { data: allTasks = [], isLoading } = useQuery<PoseTask[]>({
     queryKey: tasksQueryKey,
     queryFn: async () => (await apiClient.get(`/pose/tasks?profileId=${profileId}`)).data,
+    refetchInterval: (query) => {
+      const queryTasks = query.state.data ?? [];
+      return queryTasks.some((task) => task.status === 'pending' && !task.keypoints?.length)
+        ? 4000
+        : false;
+    },
   });
 
   const tasks = useMemo(
     () => allTasks.filter((task) => task.appInstallationId === installationId),
     [allTasks, installationId],
   );
+  const currentSelectedTask = selectedTask
+    ? tasks.find((task) => task.id === selectedTask.id) ?? selectedTask
+    : null;
+  const createdPreviewTask = createdPreviewTaskId
+    ? tasks.find((task) => task.id === createdPreviewTaskId) ?? null
+    : null;
 
   const reportQuery = useQuery<PoseSession>({
     queryKey: ['poseSession', selectedTask?.session?.id],
@@ -152,7 +229,7 @@ export function PoseTasksPanel({
   });
 
   const createTaskMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (): Promise<PoseTask> => {
       const filledImageFiles = imageFiles.filter((file): file is File => file !== null);
       if (filledImageFiles.length === 0) {
         throw new Error('Upload at least one reference image');
@@ -173,8 +250,9 @@ export function PoseTasksPanel({
         })
       ).data;
     },
-    onSuccess: () => {
+    onSuccess: (createdTask) => {
       toast.success('Pose task assigned.');
+      setCreatedPreviewTaskId(createdTask.id);
       setTaskName('');
       clearImageSlots();
       queryClient.invalidateQueries({ queryKey: tasksQueryKey });
@@ -191,6 +269,9 @@ export function PoseTasksPanel({
       setTaskPendingDelete(null);
       if (selectedTask?.id === taskId) {
         setSelectedTask(null);
+      }
+      if (createdPreviewTaskId === taskId) {
+        setCreatedPreviewTaskId(null);
       }
       queryClient.invalidateQueries({ queryKey: tasksQueryKey });
     },
@@ -250,13 +331,13 @@ export function PoseTasksPanel({
     });
   };
 
-  if (selectedTask) {
+  if (currentSelectedTask) {
     return (
       <div className="rounded-2xl border border-slate-200 dark:border-white/10 overflow-hidden">
         <div className="px-4 py-4 bg-slate-50 dark:bg-dark-900/60 flex items-center justify-between gap-3">
           <div>
             <div className="font-semibold text-slate-900 dark:text-slate-100">
-              {selectedTask.name}
+              {currentSelectedTask.name}
             </div>
             <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
               Session Report
@@ -273,6 +354,8 @@ export function PoseTasksPanel({
         </div>
 
         <div className="p-4 space-y-4">
+          <PoseTaskReferencePreview task={currentSelectedTask} skeletonHeight={220} />
+
           {reportQuery.isLoading ? (
             <div className="text-sm text-slate-500 dark:text-slate-400">Loading report...</div>
           ) : !selectedSession ? (
@@ -316,7 +399,7 @@ export function PoseTasksPanel({
                     <YAxis domain={[0, 1]} tickLine={false} axisLine={false} />
                     <Tooltip />
                     <ReferenceLine
-                      y={selectedTask.similarityThreshold}
+                      y={currentSelectedTask.similarityThreshold}
                       stroke="#f97316"
                       label="Threshold"
                     />
@@ -499,6 +582,15 @@ export function PoseTasksPanel({
                 Use the same pose from front, angled, or side views when possible.
               </p>
             </div>
+
+            {createdPreviewTask ? (
+              <div className="rounded-xl border border-slate-200 bg-white/70 p-3 dark:border-white/10 dark:bg-dark-900/40">
+                <p className="mb-3 text-sm font-semibold text-slate-800 dark:text-slate-100">
+                  Latest assigned task preview
+                </p>
+                <PoseTaskReferencePreview task={createdPreviewTask} skeletonHeight={220} />
+              </div>
+            ) : null}
 
             <button
               type="submit"
