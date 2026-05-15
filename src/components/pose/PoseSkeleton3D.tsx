@@ -247,10 +247,10 @@ function SkeletonScene({
       <OrbitControls
         enablePan={false}
         minDistance={0.8}
-        maxDistance={4.5}
-        minPolarAngle={0}
-        maxPolarAngle={Math.PI * 0.92}
-        target={[0, 0.75, 0]}
+        maxDistance={5}
+        minPolarAngle={0.1}
+        maxPolarAngle={Math.PI * 0.9}
+        target={[0, 0.85, 0]}
         autoRotate={false}
       />
 
@@ -337,7 +337,7 @@ export function PoseSkeleton3D({ keypoints, height = 260 }: PoseSkeleton3DProps)
       </div>
       <div style={{ height }}>
         <Canvas
-          camera={{ position: [0, 0.85, 2.4], fov: 52 }}
+          camera={{ position: [0, 0.9, 2.6], fov: 50 }}
           style={{ background: '#0d0d14' }}
         >
           <Suspense fallback={null}>
