@@ -18,23 +18,31 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { apiClient } from '../api/client';
-import {
-  APP_CATEGORIES,
+import { 
+  APP_CATEGORIES, 
   APP_CATALOG,
   CATEGORY_EMOJI,
   POPULAR_APPS,
   getAppsByCategory,
   searchApps,
-  type CatalogApp,
-} from '../data/kidsAppCatalog';
+} from '../data/kidsAppCatalog'; 
 
 type AnyRecord = Record<string, any>;
 type TabId = 'overview' | 'screen-time' | 'apps' | 'web-filter' | 'bedtime' | 'reports';
 
-interface KidsUsageSummary {
+interface KidsUsageSummary { 
   packageName: string;
   dateKey: string;
   usageSeconds: number;
+} 
+
+interface InstalledApp {
+  packageName: string;
+  displayName: string;
+  iconUrl?: string;
+  category?: string;
+  isBlocked: boolean;
+  timeLimitMinutes?: number;
 }
 
 interface KidsBlockedEvent {
@@ -45,7 +53,7 @@ interface KidsBlockedEvent {
   reportedAt: string;
 }
 
-interface KidsHeartbeat {
+interface KidsHeartbeat { 
   policyVersion: number | null;
   batteryLevelPercent: number | null;
   managementMode: string | null;
@@ -59,9 +67,10 @@ interface KidsHeartbeat {
     backgroundLocation?: boolean;
   } | null;
   lastSyncEpochMillis: number | null;
-  location: KidsLocation | null;
-  receivedAt: string;
-}
+  location: KidsLocation | null; 
+  installedPackages: Array<Partial<InstalledApp> & { name?: string; appLabel?: string }> | string[];
+  receivedAt: string; 
+} 
 
 interface KidsLocation {
   latitude: number;
@@ -251,12 +260,13 @@ function parseLatestHeartbeat(auditEntries: AnyRecord[]): KidsHeartbeat | null {
     policyVersion: latest.details.policyVersion ?? null,
     batteryLevelPercent: latest.details.batteryLevelPercent ?? null,
     managementMode: latest.details.managementMode ?? null,
-    permissions: latest.details.permissions ?? null,
-    lastSyncEpochMillis: latest.details.lastSyncEpochMillis ?? null,
-    location: normalizeLocation(latest.details.location),
-    receivedAt: String(latest.createdAt ?? ''),
-  };
-}
+    permissions: latest.details.permissions ?? null, 
+    lastSyncEpochMillis: latest.details.lastSyncEpochMillis ?? null, 
+    location: normalizeLocation(latest.details.location), 
+    installedPackages: Array.isArray(latest.details.installedPackages) ? latest.details.installedPackages : [],
+    receivedAt: String(latest.createdAt ?? ''), 
+  }; 
+} 
 
 function normalizeLocation(value: unknown): KidsLocation | null {
   if (!value || typeof value !== 'object') return null;
@@ -323,14 +333,18 @@ function buildWeeklyUsageBars(
   return result;
 }
 
-function buildTopAppsByUsage(
-  summaries: KidsUsageSummary[],
-  limit = 5,
-): Array<{ packageName: string; totalSeconds: number; totalMinutes: number }> {
-  const byPackage = new Map<string, number>();
-  for (const summary of summaries) {
-    byPackage.set(summary.packageName, (byPackage.get(summary.packageName) ?? 0) + summary.usageSeconds);
-  }
+function buildTopAppsByUsage( 
+  summaries: KidsUsageSummary[], 
+  limit = 5, 
+): Array<{ packageName: string; totalSeconds: number; totalMinutes: number }> { 
+  const byPackage = new Map<string, number>(); 
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 6);
+  const cutoffKey = cutoff.toISOString().slice(0, 10);
+  for (const summary of summaries) { 
+    if (summary.dateKey < cutoffKey) continue;
+    byPackage.set(summary.packageName, (byPackage.get(summary.packageName) ?? 0) + summary.usageSeconds); 
+  } 
 
   return [...byPackage.entries()]
     .sort((a, b) => b[1] - a[1])
@@ -346,7 +360,7 @@ function todayDateKey(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function blockReasonLabel(reason: string): string {
+function blockReasonLabel(reason: string): string { 
   switch (reason) {
     case 'BLOCK_APP':
       return 'App blocked';
@@ -354,71 +368,140 @@ function blockReasonLabel(reason: string): string {
       return 'Daily limit reached';
     case 'BLOCK_BEDTIME':
       return 'Bedtime active';
-    case 'BLOCK_REMOTE_LOCK':
-      return 'Device locked by parent';
+    case 'BLOCK_REMOTE_LOCK': 
+      return 'Device locked by parent'; 
+    case 'BLOCK_PERMISSION_RECOVERY':
+      return 'Permissions required';
+    case 'BLOCK_AGE_RESTRICTION':
+      return 'Age rating cap';
     default:
       return 'Blocked';
-  }
+  } 
+} 
+
+function appDisplayName(packageName: string): string {
+  return packageName
+    .split('.')
+    .filter(Boolean)
+    .slice(-1)[0]
+    ?.replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase()) || packageName;
 }
 
-/**
- * Renders a square app icon: tries loading from icon.horse, falls back to a
- * coloured letter-avatar.
- */
-function AppIcon({
-  app,
-  size = 36,
-}: {
-  app: CatalogApp;
-  size?: number;
-}) {
-  const [failed, setFailed] = useState(false);
-  const url = `https://icon.horse/icon/${app.iconDomain}`;
+function normalizeInstalledApps(
+  apiItems: AnyRecord[] | undefined,
+  heartbeatItems: KidsHeartbeat['installedPackages'] | undefined,
+  blockedPackages: string[],
+  limits: Record<string, number>,
+): InstalledApp[] {
+  const byPackage = new Map<string, InstalledApp>();
 
-  return (
-    <div
-      className="flex shrink-0 items-center justify-center overflow-hidden rounded-xl"
-      style={{ width: size, height: size, background: app.iconColor }}
-    >
-      {!failed ? (
-        <img
-          src={url}
-          alt={app.name}
-          width={size}
-          height={size}
-          className="h-full w-full object-cover"
-          onError={() => setFailed(true)}
-        />
-      ) : (
-        <span
-          className="font-bold text-white"
-          style={{ fontSize: size * 0.42 }}
-        >
-          {app.iconLetter}
-        </span>
-      )}
-    </div>
-  );
+  const add = (raw: AnyRecord | string) => {
+    const packageName = typeof raw === 'string'
+      ? raw
+      : String(raw.packageName ?? raw.package ?? raw.appCatalog?.packageName ?? '');
+    if (!packageName) return;
+    const displayName = typeof raw === 'string'
+      ? appDisplayName(packageName)
+      : String(raw.displayName ?? raw.name ?? raw.appLabel ?? raw.appCatalog?.displayName ?? appDisplayName(packageName));
+    byPackage.set(packageName, {
+      packageName,
+      displayName,
+      iconUrl: typeof raw === 'string' ? undefined : raw.iconUrl ?? raw.appCatalog?.iconUrl,
+      category: typeof raw === 'string' ? undefined : raw.category ?? raw.appCatalog?.category,
+      isBlocked: blockedPackages.includes(packageName),
+      timeLimitMinutes: limits[packageName],
+    });
+  };
+
+  (apiItems ?? []).forEach(add);
+  (heartbeatItems ?? []).forEach((item) => add(item as AnyRecord | string));
+  return [...byPackage.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
+
+const TIME_LIMIT_OPTIONS = [
+  { label: 'No limit', value: 0 },
+  { label: '15m', value: 15 },
+  { label: '30m', value: 30 },
+  { label: '1h', value: 60 },
+  { label: '2h', value: 120 },
+  { label: '3h', value: 180 },
+  { label: '4h', value: 240 },
+];
+
+/** 
+ * Renders a square app icon: tries loading from icon.horse, falls back to a 
+ * coloured letter-avatar. 
+ */ 
+function AppIcon({ 
+  app, 
+  size = 36, 
+}: { 
+  app: AnyRecord; 
+  size?: number; 
+}) { 
+  const [failed, setFailed] = useState(false); 
+  const label = String(app.displayName ?? app.name ?? app.packageName ?? 'App');
+  const url = app.iconUrl ?? (app.iconDomain ? `https://icon.horse/icon/${app.iconDomain}` : undefined); 
+ 
+  return ( 
+    <div 
+      className="flex shrink-0 items-center justify-center overflow-hidden rounded-xl" 
+      style={{ width: size, height: size }} 
+      data-icon-placeholder
+    > 
+      {url && !failed ? ( 
+        <img 
+          src={url} 
+          alt={label} 
+          width={size} 
+          height={size} 
+          className="h-full w-full rounded-xl object-cover" 
+          onError={() => setFailed(true)} 
+        /> 
+      ) : ( 
+        <div className="flex h-full w-full items-center justify-center rounded-xl bg-slate-700">
+          <span className="font-bold text-white" style={{ fontSize: size * 0.42 }}> 
+            {String(app.iconLetter ?? label.slice(0, 1)).toUpperCase()} 
+          </span> 
+        </div>
+      )} 
+    </div> 
+  ); 
+} 
 
 function AppRow({
   app,
   isBlocked,
   isPending,
   onToggle,
-}: {
-  app: CatalogApp;
-  isBlocked: boolean;
-  isPending: boolean;
-  onToggle: (blocked: boolean) => void;
-}) {
-  return (
+}: { 
+  app: AnyRecord; 
+  isBlocked: boolean; 
+  isPending: boolean; 
+  onToggle: (blocked: boolean) => void; 
+}) { 
+  const packageName = String(app.packageName ?? '');
+  const displayName = String(app.displayName ?? app.name ?? packageName);
+  const category = app.category ? String(app.category) : undefined;
+  const timeLimitMinutes = Number(app.timeLimitMinutes ?? 0);
+  return ( 
     <div className="flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2.5">
-      <AppIcon app={app} size={36} />
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-slate-100">{app.name}</div>
-        <div className="truncate font-mono text-[10px] text-slate-500">{app.packageName}</div>
-      </div>
+      <AppIcon app={app} size={36} /> 
+      <div className="min-w-0 flex-1"> 
+        <div className="text-sm font-medium text-slate-100">{displayName}</div> 
+        <div className="truncate font-mono text-[10px] text-slate-500">{packageName}</div> 
+      </div> 
+      {category ? ( 
+        <span className="hidden shrink-0 rounded-full bg-slate-700 px-2.5 py-1 text-xs font-semibold text-slate-300 sm:inline-flex"> 
+          {category} 
+        </span> 
+      ) : null}
+      <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${ 
+        timeLimitMinutes ? 'bg-brand-500/10 text-brand-400' : 'bg-slate-700 text-slate-400' 
+      }`}> 
+        {minutesLabel(timeLimitMinutes)} 
+      </span>
       {isBlocked ? (
         <span className="shrink-0 rounded-full bg-rose-400/10 px-2.5 py-1 text-xs font-semibold text-rose-400">
           Blocked
@@ -491,8 +574,9 @@ export default function KidsControlCenter({
   const [bedtimeEnabled, setBedtimeEnabled] = useState(Boolean(entryValue(policy, 'kids.bedtime')?.enabled ?? false));
   const [bedtimeDays, setBedtimeDays] = useState<number[]>([0, 1, 2, 3, 4]);
   const [bedtimeStart, setBedtimeStart] = useState({ hour: 21, minute: 0 });
-  const [bedtimeWake, setBedtimeWake] = useState({ hour: 7, minute: 0 });
-  const [blockedCategories, setBlockedCategories] = useState<Set<string>>(new Set());
+  const [bedtimeWake, setBedtimeWake] = useState({ hour: 7, minute: 0 }); 
+  const [blockedCategories, setBlockedCategories] = useState<Set<string>>(new Set()); 
+  const [showUninstallConfirm, setShowUninstallConfirm] = useState(false);
   const [newPackage, setNewPackage] = useState('');
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
     new Set(['Social Media', 'Games & Gaming']),
@@ -501,18 +585,24 @@ export default function KidsControlCenter({
   // Scheduled Blocks
   const [scheduledBlocks, setScheduledBlocks] = useState<ScheduledBlock[]>([]);
   const [showAddBlock, setShowAddBlock] = useState(false);
-  const [newBlock, setNewBlock] = useState<Omit<ScheduledBlock, 'id'>>({
-    name: '',
-    enabled: true,
+  const [newBlock, setNewBlock] = useState<Omit<ScheduledBlock, 'id'>>({ 
+    name: '', 
+    enabled: true, 
     startTime: '08:00',
-    endTime: '15:00',
-    days: [1, 2, 3, 4, 5],
-  });
-  // Per-App Limits interactive state
+    endTime: '15:00', 
+    days: [1, 2, 3, 4, 5], 
+  }); 
   const [perAppEditing, setPerAppEditing] = useState<string | null>(null);
   const [perAppDraft, setPerAppDraft] = useState('');
   const [newLimitPackage, setNewLimitPackage] = useState('');
   const [newLimitMinutes, setNewLimitMinutes] = useState(30);
+  const { data: deviceApps = [], isError: installedAppsError } = useQuery<AnyRecord[]>({
+    queryKey: ['device', device.id, 'installed-apps'],
+    // TODO: replace with GET /devices/:deviceId/installed-apps once endpoint exists.
+    queryFn: async () => (await apiClient.get(`/devices/${device.id}/apps`)).data,
+    enabled: !!device.id,
+    retry: false,
+  });
 
   useEffect(() => {
     setDailyLimitHours(Math.round(dailyLimitMinutes / 60));
@@ -650,20 +740,56 @@ export default function KidsControlCenter({
       toast.error(error.response?.data?.message || 'Failed to unlock device'),
   });
 
-  const pauseMutation = useMutation({
-    mutationFn: async () =>
-      (await apiClient.post(`/profiles/${profile.id}/pause`, {})).data,
+  const pauseMutation = useMutation({ 
+    mutationFn: async (command: 'UNLOCK' | 'LOCKDOWN') => 
+      (await apiClient.post(`/devices/${device.id}/commands`, { command })).data, 
+    onSuccess: () => { 
+      queryClient.invalidateQueries({ queryKey: ['app', installationId, 'effective-policy'] }); 
+      queryClient.invalidateQueries({ queryKey: ['profile', profile.id] }); 
+      queryClient.invalidateQueries({ queryKey: ['device', device.id, 'installed-apps'] });
+      toast.success('Device command sent.'); 
+      setTimeout(() => onRequestRefresh?.(), 3_000);
+    }, 
+    onError: (error: AnyRecord) => 
+      toast.error(error.response?.data?.message || 'Failed to update pause state'), 
+  }); 
+
+  const devicePolicyMutation = useMutation({
+    mutationFn: async (entry: { key: string; value: AnyRecord; strength?: string }) =>
+      (await apiClient.patch(`/devices/${device.id}/policy`, {
+        entries: [
+          {
+            key: entry.key,
+            value: entry.value,
+            strength: entry.strength ?? 'soft',
+            operation: 'upsert',
+          },
+        ],
+      })).data,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['profile', profile.id] });
-      toast.success('Profile paused.');
+      queryClient.invalidateQueries({ queryKey: ['app', installationId, 'effective-policy'] });
+      toast.success('Device policy updated.');
     },
-    onError: (error: AnyRecord) =>
-      toast.error(error.response?.data?.message || 'Failed to pause profile'),
+    onError: (error: AnyRecord) => {
+      toast.error(error.response?.data?.message || 'Failed to update device policy');
+    },
+  });
+
+  const uninstallMutation = useMutation({
+    mutationFn: async () =>
+      (await apiClient.post(`/devices/${device.id}/commands`, { command: 'INITIATE_UNINSTALL' })).data,
+    onSuccess: () => {
+      setShowUninstallConfirm(false);
+      toast.success('Uninstall guide sent to child device.');
+    },
+    onError: (error: AnyRecord) => {
+      toast.error(error.response?.data?.message || 'Failed to start uninstall guide');
+    },
   });
 
   const recentAlerts = useMemo<AnyRecord[]>(() => alerts.slice(0, 5), [alerts]);
-  const perAppLimits = useMemo<Array<{ packageName: string; limitMinutes: number }>>(() => {
-    const limits = entryValue(policy, 'kids.screen_time.per_app');
+  const perAppLimits = useMemo<Array<{ packageName: string; limitMinutes: number }>>(() => { 
+    const limits = entryValue(policy, 'screen_time.per_app_limits') ?? entryValue(policy, 'kids.screen_time.per_app'); 
     if (!limits || typeof limits !== 'object') return [];
     return Object.entries(limits).map(([packageName, limitMinutes]) => ({
       packageName,
@@ -749,10 +875,34 @@ export default function KidsControlCenter({
         .reduce((sum, summary) => sum + summary.usageSeconds, 0) / 60,
     );
   }, [usageSummaries]);
-  const blockedPackages = useMemo<string[]>(() => {
-    const blocklist = entryValue(policy, 'kids.blocklist');
-    return Array.isArray(blocklist?.packages) ? blocklist.packages : [];
+  const blockedPackages = useMemo<string[]>(() => { 
+    const blocklist = entryValue(policy, 'kids.blocklist'); 
+    return Array.isArray(blocklist?.packages) ? blocklist.packages : []; 
+  }, [policy]); 
+  const perAppLimitMap = useMemo<Record<string, number>>(() => {
+    const raw = entryValue(policy, 'screen_time.per_app_limits') ?? entryValue(policy, 'kids.screen_time.per_app');
+    if (!raw || typeof raw !== 'object') return {};
+    return Object.fromEntries(
+      Object.entries(raw as Record<string, unknown>).map(([key, value]) => [key, Number(value)]),
+    );
   }, [policy]);
+  const installedApps = useMemo(
+    () => normalizeInstalledApps(
+      deviceApps,
+      latestHeartbeat?.installedPackages,
+      blockedPackages,
+      perAppLimitMap,
+    ),
+    [deviceApps, latestHeartbeat, blockedPackages, perAppLimitMap],
+  );
+  const filteredInstalledApps = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return installedApps;
+    return installedApps.filter((app) =>
+      app.displayName.toLowerCase().includes(q) ||
+      app.packageName.toLowerCase().includes(q),
+    );
+  }, [installedApps, search]);
   const usageMinutes = useMemo(() => {
     const today = todayDateKey();
     const todaySeconds = usageSummaries
@@ -768,16 +918,17 @@ export default function KidsControlCenter({
     const todaySummaries = usageSummaries.filter((summary) => summary.dateKey === today);
     const uniquePackagesToday = new Set(todaySummaries.map((summary) => summary.packageName));
 
-    return {
-      appsOpened: uniquePackagesToday.size,
-      appsBlocked: todayBlocked.length,
+    return { 
+      screenTimeToday: usageLabel(usageMinutes),
+      appsOpened: uniquePackagesToday.size, 
+      appsBlocked: todayBlocked.length, 
       sitesBlocked: 0,
       alertsToday: alerts.filter((alert: AnyRecord) => {
         const date = new Date(alert.sentAt || alert.createdAt || 0);
         return date.toISOString().slice(0, 10) === today;
       }).length,
     };
-  }, [usageSummaries, todayBlocked, alerts]);
+  }, [usageSummaries, usageMinutes, todayBlocked, alerts]); 
   const deviceHealthItems = useMemo<DeviceHealthItem[]>(() => {
     // Primary source: device fields written directly by heartbeat. Fallback to
     // audit heartbeat permissions when those entries are linked to this app.
@@ -816,12 +967,12 @@ export default function KidsControlCenter({
     });
   };
 
-  const patchPerAppLimits = (next: Record<string, number>) => {
-    patchPolicyMutation.mutate({
-      key: 'kids.screen_time.per_app',
-      value: next,
-    });
-  };
+  const patchPerAppLimits = (next: Record<string, number>) => { 
+    patchPolicyMutation.mutate({ 
+      key: 'screen_time.per_app_limits', 
+      value: next, 
+    }); 
+  }; 
 
   const patchScheduledBlocks = (blocks: ScheduledBlock[]) => {
     patchPolicyMutation.mutate({
@@ -831,12 +982,18 @@ export default function KidsControlCenter({
     });
   };
 
-  const currentPerAppMap = (): Record<string, number> => {
-    const raw = entryValue(policy, 'kids.screen_time.per_app');
-    if (!raw || typeof raw !== 'object') return {};
-    return Object.fromEntries(
-      Object.entries(raw as Record<string, unknown>).map(([k, v]) => [k, Number(v)]),
-    );
+  const currentPerAppMap = (): Record<string, number> => { 
+    return { ...perAppLimitMap }; 
+  }; 
+
+  const setPerAppLimit = (packageName: string, minutes: number) => {
+    const map = currentPerAppMap();
+    if (minutes > 0) {
+      patchPerAppLimits({ ...map, [packageName]: minutes });
+      return;
+    }
+    const { [packageName]: _removed, ...rest } = map;
+    patchPerAppLimits(rest);
   };
 
   const addPerAppLimit = () => {
@@ -885,15 +1042,15 @@ export default function KidsControlCenter({
             </div>
           </div>
           <div className="flex flex-wrap gap-2 lg:ml-auto">
-            <button
-              type="button"
-              onClick={() => pauseMutation.mutate()}
-              disabled={pauseMutation.isPending}
-              className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800/60 disabled:opacity-50"
-            >
-              <Pause className="h-4 w-4" />
-              Pause
-            </button>
+            <button 
+              type="button" 
+              onClick={() => pauseMutation.mutate(remoteLockActive ? 'LOCKDOWN' : 'UNLOCK')} 
+              disabled={pauseMutation.isPending} 
+              className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800/60 disabled:opacity-50" 
+            > 
+              <Pause className="h-4 w-4" /> 
+              {remoteLockActive ? 'Resume' : 'Pause'} 
+            </button> 
             {remoteLockActive ? (
               <button
                 type="button"
@@ -915,20 +1072,55 @@ export default function KidsControlCenter({
                 Lock Now
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => syncMutation.mutate()}
+            <button 
+              type="button" 
+              onClick={() => syncMutation.mutate()} 
               disabled={syncMutation.isPending}
               className="inline-flex items-center gap-2 rounded-lg border border-brand-500/20 px-3 py-2 text-sm font-medium text-brand-400 hover:bg-brand-500/10 disabled:opacity-50"
             >
-              <RefreshCcw className="h-4 w-4" />
-              Sync
+              <RefreshCcw className="h-4 w-4" /> 
+              Sync 
+            </button> 
+            <button
+              type="button"
+              onClick={() => setShowUninstallConfirm(true)}
+              className="inline-flex items-center gap-2 rounded-lg border border-rose-400/30 px-3 py-2 text-sm font-medium text-rose-400 hover:bg-rose-400/10"
+            >
+              Uninstall App
             </button>
+          </div> 
+        </div> 
+      </section> 
+
+      {showUninstallConfirm ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-4">
+          <div className="w-full max-w-md rounded-xl border border-white/10 bg-slate-900 p-5 shadow-xl">
+            <h3 className="text-base font-semibold text-slate-100">Uninstall GuardHUB Kids?</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-400">
+              This will guide your child through removing GuardHUB Kids from their device. They will need to follow the steps shown on their phone.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowUninstallConfirm(false)}
+                className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-white/5"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={uninstallMutation.isPending}
+                onClick={() => uninstallMutation.mutate()}
+                className="rounded-lg bg-rose-500 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-400 disabled:opacity-40"
+              >
+                Send guide
+              </button>
+            </div>
           </div>
         </div>
-      </section>
+      ) : null}
 
-      <div className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-lg bg-slate-900/40 p-1">
+      <div className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-lg bg-slate-900/40 p-1"> 
         {tabs.map((tab) => (
           <button
             type="button"
@@ -952,10 +1144,15 @@ export default function KidsControlCenter({
                 {`${usageLabel(usageMinutes)} used${dailyLimitMinutes > 0 ? ` / ${minutesLabel(dailyLimitMinutes)} limit` : ' · No limit set'}`}
               </span>
             </div>
-            <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
-              <div className="h-full rounded-full bg-brand-500" style={{ width: `${usagePercent}%` }} />
-            </div>
-          </section>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10"> 
+              <div className="h-full rounded-full bg-brand-500" style={{ width: `${usagePercent}%` }} /> 
+            </div> 
+            {usageSummaries.length === 0 ? ( 
+              <p className="mt-3 text-xs text-amber-400"> 
+                ⚠ No usage data received yet. Ensure the child device is online and the GuardHUB Kids app has Usage Access permission granted. 
+              </p> 
+            ) : null} 
+          </section> 
           <section className="glass-panel p-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
@@ -1054,10 +1251,11 @@ export default function KidsControlCenter({
             </div>
           ) : null}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {[
-              ['Apps Opened', todayStats.appsOpened, 'text-accent-teal'],
-              ['Apps Blocked', todayStats.appsBlocked, 'text-rose-400'],
-              ['Sites Blocked', todayStats.sitesBlocked, 'text-rose-400'],
+            {[ 
+              ['Screen Time Today', todayStats.screenTimeToday, 'text-brand-400'],
+              ['Apps Opened', todayStats.appsOpened, 'text-accent-teal'], 
+              ['Apps Blocked', todayStats.appsBlocked, 'text-rose-400'], 
+              ['Sites Blocked', todayStats.sitesBlocked, 'text-rose-400'], 
               ['Alerts Today', todayStats.alertsToday, 'text-amber-400'],
             ].map(([label, value, colour]) => (
               <div key={String(label)} className="rounded-lg border border-white/10 bg-slate-900/40 px-3 py-3">
@@ -1324,11 +1522,42 @@ export default function KidsControlCenter({
               </div>
             ) : null}
           </section>
-          <section className="glass-panel p-5 lg:col-span-2">
-            <h3 className="text-sm font-semibold text-slate-100">Per-App Time Limits</h3>
-            <p className="mt-1 text-xs text-slate-500">Daily cap for individual apps. Use Android package names.</p>
+          <section className="glass-panel p-5 lg:col-span-2"> 
+            <h3 className="text-sm font-semibold text-slate-100">Per-App Time Limits</h3> 
+            <p className="mt-1 text-xs text-slate-500">Set a daily time cap for individual apps. Leave blank for no limit.</p> 
 
-            {perAppLimits.length > 0 ? (
+            <div className="mt-4 max-h-96 space-y-2 overflow-y-auto pr-1">
+              {installedApps.length ? installedApps.map((app) => (
+                <div key={app.packageName} className="flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2.5">
+                  <AppIcon app={app} size={36} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-slate-100">{app.displayName}</div>
+                    <div className="truncate font-mono text-[10px] text-slate-500">{app.packageName}</div>
+                  </div>
+                  {app.category ? (
+                    <span className="hidden rounded-full bg-slate-700 px-2.5 py-1 text-xs font-semibold text-slate-300 sm:inline-flex">
+                      {app.category}
+                    </span>
+                  ) : null}
+                  <select
+                    value={perAppLimitMap[app.packageName] ?? 0}
+                    disabled={patchPolicyMutation.isPending}
+                    onChange={(event) => setPerAppLimit(app.packageName, Number(event.target.value))}
+                    className={`rounded-full border border-white/10 px-2.5 py-1 text-xs font-semibold outline-none ${
+                      perAppLimitMap[app.packageName] ? 'bg-brand-500/10 text-brand-400' : 'bg-slate-800 text-slate-400'
+                    }`}
+                  >
+                    {TIME_LIMIT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )) : (
+                <EmptyState>No apps found. Make sure the child device is online and has synced recently.</EmptyState>
+              )}
+            </div>
+
+            {false && (<>{perAppLimits.length > 0 ? ( 
               <div className="mt-4 space-y-2">
                 {perAppLimits.map((app) => {
                   const isEditing = perAppEditing === app.packageName;
@@ -1428,10 +1657,11 @@ export default function KidsControlCenter({
                 Add
               </button>
             </div>
-            <p className="mt-1.5 text-xs text-slate-500">
-              Example: <span className="font-mono text-slate-400">com.tiktok.android</span>
-            </p>
-          </section>
+            <p className="mt-1.5 text-xs text-slate-500"> 
+              Example: <span className="font-mono text-slate-400">com.tiktok.android</span> 
+            </p> 
+            </>)} 
+          </section> 
         </div>
       ) : null}
 
@@ -1458,7 +1688,34 @@ export default function KidsControlCenter({
             )}
           </div>
 
-          {search.trim() ? (
+          <section className="glass-panel p-4">
+            {filteredInstalledApps.length > 0 ? (
+              <div className="space-y-2">
+                {filteredInstalledApps.map((app) => (
+                  <AppRow
+                    key={app.packageName}
+                    app={app}
+                    isBlocked={blockedPackages.includes(app.packageName)}
+                    isPending={patchPolicyMutation.isPending}
+                    onToggle={(shouldBlock) => {
+                      if (shouldBlock) {
+                        patchBlocklist([...blockedPackages, app.packageName]);
+                      } else {
+                        patchBlocklist(blockedPackages.filter((p) => p !== app.packageName));
+                      }
+                    }}
+                  />
+                ))}
+              </div>
+            ) : (
+              <EmptyState>No apps found. Make sure the child device is online and has synced recently.</EmptyState>
+            )}
+            {installedAppsError ? (
+              <p className="mt-3 text-xs text-amber-400">No installed-app endpoint data received; showing the latest heartbeat data when available.</p>
+            ) : null}
+          </section>
+
+          {false && (search.trim() ? (
             /* ── Search results ───────────────────────────────────────────── */
             <section className="glass-panel p-4">
               <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -1649,12 +1906,56 @@ export default function KidsControlCenter({
                 )}
               </section>
             </>
-          )}
+          ))}
         </div>
       ) : null}
 
       {activeTab === 'web-filter' ? (
-        <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="space-y-4">
+          <section className="glass-panel space-y-3 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-100">Safe Search (Google/Bing)</h3>
+                <p className="mt-1 text-xs text-slate-500">Enforce safer search defaults where managed apps support it.</p>
+              </div>
+              <Toggle
+                checked={Boolean(entryValue(policy, 'kids.web_filter')?.safe_search?.enabled)}
+                disabled={devicePolicyMutation.isPending}
+                onChange={(enabled) => {
+                  const current = entryValue(policy, 'kids.web_filter') ?? {};
+                  devicePolicyMutation.mutate({
+                    key: 'kids.web_filter',
+                    value: { ...current, safe_search: { ...(current.safe_search ?? {}), enabled } },
+                    strength: 'soft',
+                  });
+                }}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-100">Age Rating Cap</h3>
+                <p className="mt-1 text-xs text-slate-500">Block app launches above the selected content rating.</p>
+              </div>
+              <select
+                value={String(entryValue(policy, 'kids.content')?.age_rating_max ?? 'no_limit')}
+                disabled={devicePolicyMutation.isPending}
+                onChange={(event) => {
+                  devicePolicyMutation.mutate({
+                    key: 'kids.content',
+                    value: { age_rating_max: event.target.value },
+                    strength: 'soft',
+                  });
+                }}
+                className="rounded-lg border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-500"
+              >
+                {['G', 'PG', 'PG-13', 'R'].map((rating) => (
+                  <option key={rating} value={rating}>{rating}</option>
+                ))}
+                <option value="no_limit">No limit</option>
+              </select>
+            </div>
+          </section>
+          <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {webCategories.map((category) => {
             const blocked = blockedCategories.has(category);
             return (
@@ -1672,7 +1973,7 @@ export default function KidsControlCenter({
                   }
                   patchPolicyMutation.mutate({
                     key: 'kids.web_filter',
-                    value: { categories },
+                    value: { ...(entryValue(policy, 'kids.web_filter') ?? {}), categories },
                     strength: 'hard',
                   });
                 }}
@@ -1688,7 +1989,8 @@ export default function KidsControlCenter({
               </button>
             );
           })}
-        </section>
+          </section>
+        </div>
       ) : null}
 
       {activeTab === 'bedtime' ? (
@@ -1826,9 +2128,9 @@ export default function KidsControlCenter({
                 )}
               </>
             ) : (
-              <EmptyState>
-                No usage data yet. Usage reports appear here once the device syncs.
-              </EmptyState>
+              <div className="mt-4 rounded-xl border border-amber-400/20 bg-amber-400/5 px-4 py-3 text-xs text-amber-400">
+                ⚠ No usage data received yet. Ensure the child device is online and the GuardHUB Kids app has Usage Access permission granted.
+              </div>
             )}
           </section>
           <section className="glass-panel p-5">
