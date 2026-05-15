@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -67,6 +67,13 @@ const cameraOptions = [
   { label: 'Let child choose', value: 'child_choice' },
 ];
 
+const poseImageSlotCount = 4;
+const maxPoseImageBytes = 5 * 1024 * 1024;
+
+function createEmptyImageSlots<T>() {
+  return Array<T | null>(poseImageSlotCount).fill(null);
+}
+
 function statusTone(status: string) {
   if (status === 'completed') return 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300';
   if (status === 'expired' || status === 'extraction_failed') {
@@ -117,8 +124,13 @@ export function PoseTasksPanel({
   const [similarityPercent, setSimilarityPercent] = useState(70);
   const [toleranceWindowSec, setToleranceWindowSec] = useState(5);
   const [cameraPreference, setCameraPreference] = useState('child_choice');
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [imageFiles, setImageFiles] = useState<(File | null)[]>(
+    () => createEmptyImageSlots<File>(),
+  );
+  const [imagePreviews, setImagePreviews] = useState<(string | null)[]>(
+    () => createEmptyImageSlots<string>(),
+  );
+  const imagePreviewsRef = useRef<(string | null)[]>(createEmptyImageSlots<string>());
   const [selectedTask, setSelectedTask] = useState<PoseTask | null>(null);
   const [taskPendingDelete, setTaskPendingDelete] = useState<PoseTask | null>(null);
 
@@ -141,8 +153,9 @@ export function PoseTasksPanel({
 
   const createTaskMutation = useMutation({
     mutationFn: async () => {
-      if (!imageFile) {
-        throw new Error('Image is required');
+      const filledImageFiles = imageFiles.filter((file): file is File => file !== null);
+      if (filledImageFiles.length === 0) {
+        throw new Error('Upload at least one reference image');
       }
 
       const formData = new FormData();
@@ -152,7 +165,7 @@ export function PoseTasksPanel({
       formData.append('toleranceWindowSec', String(toleranceWindowSec));
       formData.append('cameraPreference', cameraPreference);
       formData.append('appInstallationId', installationId);
-      formData.append('image', imageFile);
+      filledImageFiles.forEach((file) => formData.append('images', file));
 
       return (
         await apiClient.post('/pose/tasks', formData, {
@@ -163,7 +176,7 @@ export function PoseTasksPanel({
     onSuccess: () => {
       toast.success('Pose task assigned.');
       setTaskName('');
-      setImageFile(null);
+      clearImageSlots();
       queryClient.invalidateQueries({ queryKey: tasksQueryKey });
     },
     onError: (error: any) => {
@@ -187,15 +200,12 @@ export function PoseTasksPanel({
   });
 
   useEffect(() => {
-    if (!imageFile) {
-      setImagePreviewUrl(null);
-      return;
-    }
-
-    const nextUrl = URL.createObjectURL(imageFile);
-    setImagePreviewUrl(nextUrl);
-    return () => URL.revokeObjectURL(nextUrl);
-  }, [imageFile]);
+    return () => {
+      imagePreviewsRef.current.forEach((previewUrl) => {
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+      });
+    };
+  }, []);
 
   const selectedSession = reportQuery.data;
   const chartTicks = selectedSession?.ticks ?? [];
@@ -204,21 +214,40 @@ export function PoseTasksPanel({
   const canSubmit =
     editable &&
     taskName.trim().length > 0 &&
-    !!imageFile &&
+    imageFiles.some((file) => file !== null) &&
     !createTaskMutation.isPending;
 
-  const handleFileChange = (file: File | undefined) => {
-    if (!file) {
-      setImageFile(null);
-      return;
-    }
+  const clearImageSlots = () => {
+    imagePreviewsRef.current.forEach((previewUrl) => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    });
+    const emptyFiles = createEmptyImageSlots<File>();
+    const emptyPreviews = createEmptyImageSlots<string>();
+    imagePreviewsRef.current = emptyPreviews;
+    setImageFiles(emptyFiles);
+    setImagePreviews(emptyPreviews);
+  };
 
-    if (file.size > 5 * 1024 * 1024) {
+  const handleImageChange = (slotIndex: number, file: File | null) => {
+    if (file && file.size > maxPoseImageBytes) {
       toast.error('Image must be 5 MB or smaller.');
       return;
     }
 
-    setImageFile(file);
+    setImageFiles((previousFiles) => {
+      const nextFiles = [...previousFiles];
+      nextFiles[slotIndex] = file;
+      return nextFiles;
+    });
+    setImagePreviews((previousPreviews) => {
+      const nextPreviews = [...previousPreviews];
+      if (previousPreviews[slotIndex]) {
+        URL.revokeObjectURL(previousPreviews[slotIndex]);
+      }
+      nextPreviews[slotIndex] = file ? URL.createObjectURL(file) : null;
+      imagePreviewsRef.current = nextPreviews;
+      return nextPreviews;
+    });
   };
 
   if (selectedTask) {
@@ -403,27 +432,72 @@ export function PoseTasksPanel({
               </label>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-[1fr_140px] gap-3 items-start">
-              <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                Reference image
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png"
-                  onChange={(event) => handleFileChange(event.target.files?.[0])}
-                  className="mt-2 block w-full text-sm text-slate-600 dark:text-slate-300 file:mr-4 file:rounded-xl file:border-0 file:bg-brand-600 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
-                />
-              </label>
-              <div className="aspect-square rounded-xl border border-dashed border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-dark-900/60 overflow-hidden flex items-center justify-center">
-                {imagePreviewUrl ? (
-                  <img
-                    src={imagePreviewUrl}
-                    alt=""
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <ImagePlus className="h-8 w-8 text-slate-400" />
-                )}
+            <div>
+              <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                Reference images
+                <span className="ml-1 text-xs font-normal text-slate-400">
+                  (1 required, up to 4)
+                </span>
               </div>
+
+              <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {imagePreviews.map((previewUrl, slotIndex) => (
+                  <div key={slotIndex} className="relative">
+                    <label
+                      className={`flex h-28 w-full cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed transition-colors ${
+                        previewUrl
+                          ? 'border-brand-500 bg-brand-500/10'
+                          : 'border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-white/10 dark:bg-dark-900/60 dark:hover:bg-dark-800/70'
+                      }`}
+                    >
+                      {previewUrl ? (
+                        <img
+                          src={previewUrl}
+                          alt={`Reference ${slotIndex + 1}`}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex flex-col items-center gap-1 text-slate-400">
+                          <ImagePlus className="h-7 w-7" />
+                          <span className="text-xs">
+                            {slotIndex === 0 ? 'Required' : 'Optional'}
+                          </span>
+                        </div>
+                      )}
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png"
+                        className="hidden"
+                        onChange={(event) => {
+                          handleImageChange(
+                            slotIndex,
+                            event.target.files?.[0] ?? null,
+                          );
+                          event.target.value = '';
+                        }}
+                      />
+                    </label>
+
+                    {previewUrl ? (
+                      <button
+                        type="button"
+                        onClick={() => handleImageChange(slotIndex, null)}
+                        className="absolute -right-2 -top-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-rose-600 text-white shadow-sm transition-colors hover:bg-rose-500"
+                        aria-label={`Remove reference ${slotIndex + 1}`}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    ) : null}
+                    <div className="mt-1 text-center text-xs text-slate-400">
+                      Angle {slotIndex + 1}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <p className="mt-2 text-xs text-slate-400">
+                Use the same pose from front, angled, or side views when possible.
+              </p>
             </div>
 
             <button
