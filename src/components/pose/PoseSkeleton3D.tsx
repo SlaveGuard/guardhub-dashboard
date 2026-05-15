@@ -1,5 +1,5 @@
 import { Canvas } from '@react-three/fiber';
-import { Html, Line, OrbitControls } from '@react-three/drei';
+import { Line, OrbitControls } from '@react-three/drei';
 import { Suspense, useState } from 'react';
 import * as THREE from 'three';
 
@@ -39,57 +39,13 @@ const BONE_CONNECTIONS = [
   [30, 32],
 ] as const;
 
-const JOINT_LABELS = new Map<number, string>([
-  [0, 'Head'],
-  [11, 'L. Shoulder'],
-  [12, 'R. Shoulder'],
-  [13, 'L. Elbow'],
-  [14, 'R. Elbow'],
-  [15, 'L. Wrist'],
-  [16, 'R. Wrist'],
-  [23, 'L. Hip'],
-  [24, 'R. Hip'],
-  [25, 'L. Knee'],
-  [26, 'R. Knee'],
-  [27, 'L. Ankle'],
-  [28, 'R. Ankle'],
-]);
-
-const BODY_REGIONS = {
-  HEAD: {
-    indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-    color: '#94a3b8',
-    opacity: 0.3,
-  },
-  LEFT_ARM: {
-    indices: [11, 13, 15, 17, 19, 21],
-    color: '#60a5fa',
-    opacity: 0.35,
-  },
-  RIGHT_ARM: {
-    indices: [12, 14, 16, 18, 20, 22],
-    color: '#38bdf8',
-    opacity: 0.35,
-  },
-  TORSO: {
-    indices: [11, 12, 23, 24],
-    color: '#818cf8',
-    opacity: 0.3,
-  },
-  LEFT_LEG: {
-    indices: [23, 25, 27, 29, 31],
-    color: '#4ade80',
-    opacity: 0.35,
-  },
-  RIGHT_LEG: {
-    indices: [24, 26, 28, 30, 32],
-    color: '#34d399',
-    opacity: 0.35,
-  },
+const COLORS = {
+  center: '#94a3b8',
+  leftSide: '#818cf8',
+  rightSide: '#60a5fa',
 } as const;
 
-type BodyRegion = keyof typeof BODY_REGIONS;
-const BODY_REGION_ORDER = Object.keys(BODY_REGIONS) as BodyRegion[];
+const OPACITY = 0.72;
 
 type WorldKeypoint = Keypoint & {
   wx: number;
@@ -101,92 +57,173 @@ function hasWorldPoint(keypoint: Keypoint): keypoint is WorldKeypoint {
   return !keypoint.absent && keypoint.wx != null && keypoint.wy != null && keypoint.wz != null;
 }
 
-type BodySegmentProps = {
-  start: THREE.Vector3;
-  end: THREE.Vector3;
+type BoneCylinderProps = {
+  a: THREE.Vector3;
+  b: THREE.Vector3;
   radius: number;
   color: string;
   opacity: number;
 };
 
-function BodySegment({ start, end, radius, color, opacity }: BodySegmentProps) {
-  const dir = end.clone().sub(start);
-  const length = dir.length();
-  if (length < 0.01) return null;
+function BoneCylinder({ a, b, radius, color, opacity }: BoneCylinderProps) {
+  const dir = b.clone().sub(a);
+  const len = dir.length();
+  if (len < 0.01) return null;
 
-  const midpoint = start.clone().add(end).multiplyScalar(0.5);
-  const quaternion = new THREE.Quaternion().setFromUnitVectors(
-    new THREE.Vector3(0, 1, 0),
-    dir.clone().normalize(),
-  );
-  const midpointArray = midpoint.toArray() as [number, number, number];
-  const quaternionArray = quaternion.toArray() as [number, number, number, number];
+  const midPoint = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+  const axis = new THREE.Vector3(0, 1, 0);
+  const normDir = dir.clone().normalize();
+  const quat = new THREE.Quaternion();
+  if (normDir.dot(axis) < -0.9999) {
+    quat.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
+  } else {
+    quat.setFromUnitVectors(axis, normDir);
+  }
+  const position = midPoint.toArray() as [number, number, number];
+  const quaternion = quat.toArray() as [number, number, number, number];
 
   return (
-    <mesh position={midpointArray} quaternion={quaternionArray}>
-      <cylinderGeometry args={[radius, radius, length, 10, 1]} />
+    <mesh position={position} quaternion={quaternion}>
+      <cylinderGeometry args={[radius, radius, len, 12, 1]} />
       <meshStandardMaterial
         color={color}
         transparent
         opacity={opacity}
-        roughness={0.6}
-        metalness={0.0}
+        roughness={0.55}
+        metalness={0.05}
         depthWrite={false}
       />
     </mesh>
   );
 }
 
-function JointLabel({ position, text }: { position: THREE.Vector3; text: string }) {
+function JointSphere({
+  position,
+  radius,
+  color,
+  opacity,
+}: {
+  position: THREE.Vector3;
+  radius: number;
+  color: string;
+  opacity: number;
+}) {
   const positionArray = position.toArray() as [number, number, number];
 
   return (
-    <Html position={positionArray} center distanceFactor={3} zIndexRange={[0, 0]}>
-      <div
-        style={{
-          background: 'rgba(15,15,25,0.82)',
-          color: '#e2e8f0',
-          fontSize: '10px',
-          fontFamily: 'system-ui, sans-serif',
-          fontWeight: 600,
-          padding: '2px 6px',
-          borderRadius: '4px',
-          whiteSpace: 'nowrap',
-          pointerEvents: 'none',
-          border: '1px solid rgba(255,255,255,0.08)',
-          letterSpacing: '0.03em',
-        }}
-      >
-        {text}
-      </div>
-    </Html>
+    <mesh position={positionArray}>
+      <sphereGeometry args={[radius, 14, 10]} />
+      <meshStandardMaterial
+        color={color}
+        transparent
+        opacity={opacity}
+        roughness={0.45}
+        metalness={0.05}
+        depthWrite={false}
+      />
+    </mesh>
   );
 }
 
-function getRegion(index: number): BodyRegion {
-  return BODY_REGION_ORDER.find((region) =>
-    BODY_REGIONS[region].indices.some((regionIndex) => regionIndex === index),
-  ) ?? 'TORSO';
+function vec(keypoint: Keypoint | undefined): THREE.Vector3 | null {
+  if (!keypoint || keypoint.absent || keypoint.wx == null || keypoint.wy == null || keypoint.wz == null) {
+    return null;
+  }
+  return new THREE.Vector3(keypoint.wx, keypoint.wy, keypoint.wz);
 }
 
-function regionColour(index: number): string {
-  return BODY_REGIONS[getRegion(index)].color;
+function mid(a: THREE.Vector3, b: THREE.Vector3): THREE.Vector3 {
+  return new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
 }
 
-function regionOpacity(index: number): number {
-  return BODY_REGIONS[getRegion(index)].opacity;
-}
+function HumanBodyMesh({ keypoints }: { keypoints: Keypoint[] }) {
+  const by = new Map(keypoints.map((keypoint) => [keypoint.index, keypoint]));
+  const g = (idx: number) => vec(by.get(idx));
 
-function getSegmentRadius(aIndex: number, bIndex: number): number {
-  if (aIndex >= 0 && aIndex <= 10) return 0.055;
-  if ((aIndex === 11 && bIndex === 13) || (aIndex === 12 && bIndex === 14)) return 0.04;
-  if (aIndex === 11 || aIndex === 12) return 0.07;
-  if ((aIndex === 13 && bIndex === 15) || (aIndex === 14 && bIndex === 16)) return 0.032;
-  if ((aIndex === 23 && bIndex === 25) || (aIndex === 24 && bIndex === 26)) return 0.058;
-  if (aIndex === 23 || aIndex === 24) return 0.065;
-  if ((aIndex === 25 && bIndex === 27) || (aIndex === 26 && bIndex === 28)) return 0.046;
-  if (aIndex >= 27 && aIndex <= 30) return 0.028;
-  return 0.034;
+  const nose = g(0);
+  const lEar = g(7);
+  const rEar = g(8);
+  const lShoulder = g(11);
+  const rShoulder = g(12);
+  const lElbow = g(13);
+  const rElbow = g(14);
+  const lWrist = g(15);
+  const rWrist = g(16);
+  const lHip = g(23);
+  const rHip = g(24);
+  const lKnee = g(25);
+  const rKnee = g(26);
+  const lAnkle = g(27);
+  const rAnkle = g(28);
+  const lHeel = g(29);
+  const rHeel = g(30);
+  const lFoot = g(31);
+  const rFoot = g(32);
+
+  const midShoulder = lShoulder && rShoulder ? mid(lShoulder, rShoulder) : null;
+  const midHip = lHip && rHip ? mid(lHip, rHip) : null;
+  const headCenter: THREE.Vector3 | null = (() => {
+    if (lEar && rEar) return mid(lEar, rEar);
+    if (nose) return nose.clone().add(new THREE.Vector3(0, 0.06, 0));
+    return null;
+  })();
+
+  const C = COLORS;
+  const OP = OPACITY;
+
+  return (
+    <group>
+      {headCenter && <JointSphere position={headCenter} radius={0.098} color={C.center} opacity={OP} />}
+      {headCenter && midShoulder && (
+        <BoneCylinder a={headCenter} b={midShoulder} radius={0.032} color={C.center} opacity={OP} />
+      )}
+      {lShoulder && rShoulder && (
+        <BoneCylinder a={lShoulder} b={rShoulder} radius={0.042} color={C.center} opacity={OP} />
+      )}
+      {midShoulder && midHip && (
+        <BoneCylinder a={midShoulder} b={midHip} radius={0.082} color={C.center} opacity={OP} />
+      )}
+      {lHip && rHip && <BoneCylinder a={lHip} b={rHip} radius={0.052} color={C.center} opacity={OP} />}
+
+      {lShoulder && lElbow && (
+        <BoneCylinder a={lShoulder} b={lElbow} radius={0.04} color={C.leftSide} opacity={OP} />
+      )}
+      {lElbow && <JointSphere position={lElbow} radius={0.034} color={C.leftSide} opacity={OP} />}
+      {lElbow && lWrist && (
+        <BoneCylinder a={lElbow} b={lWrist} radius={0.03} color={C.leftSide} opacity={OP} />
+      )}
+      {lWrist && <JointSphere position={lWrist} radius={0.026} color={C.leftSide} opacity={OP} />}
+
+      {rShoulder && rElbow && (
+        <BoneCylinder a={rShoulder} b={rElbow} radius={0.04} color={C.rightSide} opacity={OP} />
+      )}
+      {rElbow && <JointSphere position={rElbow} radius={0.034} color={C.rightSide} opacity={OP} />}
+      {rElbow && rWrist && (
+        <BoneCylinder a={rElbow} b={rWrist} radius={0.03} color={C.rightSide} opacity={OP} />
+      )}
+      {rWrist && <JointSphere position={rWrist} radius={0.026} color={C.rightSide} opacity={OP} />}
+
+      {lHip && lKnee && <BoneCylinder a={lHip} b={lKnee} radius={0.055} color={C.leftSide} opacity={OP} />}
+      {lKnee && <JointSphere position={lKnee} radius={0.044} color={C.leftSide} opacity={OP} />}
+      {lKnee && lAnkle && (
+        <BoneCylinder a={lKnee} b={lAnkle} radius={0.038} color={C.leftSide} opacity={OP} />
+      )}
+      {lAnkle && lHeel && (
+        <BoneCylinder a={lAnkle} b={lHeel} radius={0.026} color={C.leftSide} opacity={OP} />
+      )}
+      {lHeel && lFoot && <BoneCylinder a={lHeel} b={lFoot} radius={0.022} color={C.leftSide} opacity={OP} />}
+
+      {rHip && rKnee && <BoneCylinder a={rHip} b={rKnee} radius={0.055} color={C.rightSide} opacity={OP} />}
+      {rKnee && <JointSphere position={rKnee} radius={0.044} color={C.rightSide} opacity={OP} />}
+      {rKnee && rAnkle && (
+        <BoneCylinder a={rKnee} b={rAnkle} radius={0.038} color={C.rightSide} opacity={OP} />
+      )}
+      {rAnkle && rHeel && (
+        <BoneCylinder a={rAnkle} b={rHeel} radius={0.026} color={C.rightSide} opacity={OP} />
+      )}
+      {rHeel && rFoot && <BoneCylinder a={rHeel} b={rFoot} radius={0.022} color={C.rightSide} opacity={OP} />}
+    </group>
+  );
 }
 
 function SkeletonScene({
@@ -202,9 +239,10 @@ function SkeletonScene({
   return (
     <>
       <gridHelper args={[2, 8, '#1e2030', '#252840']} position={[0, -0.6, 0]} />
-      <ambientLight intensity={0.5} />
-      <directionalLight position={[2, 4, 3]} intensity={1.2} castShadow={false} />
-      <pointLight color="#a5b4fc" intensity={0.4} position={[-1, 1, -1]} />
+      <ambientLight intensity={0.45} />
+      <directionalLight position={[2.5, 4, 3]} intensity={1.4} castShadow={false} />
+      <directionalLight position={[-2, 1, -2]} intensity={0.5} color="#a5b4fc" />
+      <pointLight position={[0, -1, 1]} intensity={0.3} color="#fbbf24" />
 
       <OrbitControls
         enablePan={false}
@@ -214,65 +252,42 @@ function SkeletonScene({
         autoRotate={false}
       />
 
-      {showBody &&
-        BONE_CONNECTIONS.map(([start, end]) => {
+      <group>
+        {showBody && (
+          <Suspense fallback={null}>
+            <HumanBodyMesh keypoints={keypoints} />
+          </Suspense>
+        )}
+
+        {visibleWorldKeypoints.map((keypoint) => (
+          <mesh key={`joint-${keypoint.index}`} position={[keypoint.wx, keypoint.wy, keypoint.wz]}>
+            <sphereGeometry args={[0.028, 16, 16]} />
+            <meshStandardMaterial
+              color={keypoint.estimated ? '#f59e0b' : '#6366f1'}
+              roughness={0.4}
+              metalness={0.2}
+            />
+          </mesh>
+        ))}
+
+        {BONE_CONNECTIONS.map(([start, end]) => {
           const a = byIndex.get(start);
           const b = byIndex.get(end);
           if (!a || !b || !hasWorldPoint(a) || !hasWorldPoint(b)) return null;
 
           return (
-            <BodySegment
-              key={`body-${start}-${end}`}
-              start={new THREE.Vector3(a.wx, a.wy, a.wz)}
-              end={new THREE.Vector3(b.wx, b.wy, b.wz)}
-              radius={getSegmentRadius(start, end)}
-              color={regionColour(start)}
-              opacity={regionOpacity(start)}
+            <Line
+              key={`${start}-${end}`}
+              points={[
+                [a.wx, a.wy, a.wz],
+                [b.wx, b.wy, b.wz],
+              ]}
+              color={a.estimated || b.estimated ? '#fbbf24' : '#818cf8'}
+              lineWidth={1.5}
             />
           );
         })}
-
-      {visibleWorldKeypoints.map((keypoint) => (
-        <mesh key={`joint-${keypoint.index}`} position={[keypoint.wx, keypoint.wy, keypoint.wz]}>
-          <sphereGeometry args={[0.028, 16, 16]} />
-          <meshStandardMaterial
-            color={keypoint.estimated ? '#f59e0b' : regionColour(keypoint.index)}
-            roughness={0.4}
-            metalness={0.2}
-          />
-        </mesh>
-      ))}
-
-      {BONE_CONNECTIONS.map(([start, end]) => {
-        const a = byIndex.get(start);
-        const b = byIndex.get(end);
-        if (!a || !b || !hasWorldPoint(a) || !hasWorldPoint(b)) return null;
-
-        return (
-          <Line
-            key={`${start}-${end}`}
-            points={[
-              [a.wx, a.wy, a.wz],
-              [b.wx, b.wy, b.wz],
-            ]}
-            color={a.estimated || b.estimated ? '#fbbf24' : regionColour(start)}
-            lineWidth={1.5}
-          />
-        );
-      })}
-
-      {Array.from(JOINT_LABELS.entries()).map(([index, text]) => {
-        const keypoint = byIndex.get(index);
-        if (!keypoint || !hasWorldPoint(keypoint)) return null;
-
-        return (
-          <JointLabel
-            key={`label-${index}`}
-            position={new THREE.Vector3(keypoint.wx, keypoint.wy, keypoint.wz)}
-            text={text}
-          />
-        );
-      })}
+      </group>
     </>
   );
 }
