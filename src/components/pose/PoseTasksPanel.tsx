@@ -23,7 +23,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { apiClient } from '../../api/client';
+import { API_URL, apiClient } from '../../api/client';
 import { PoseSkeleton3D } from './PoseSkeleton3D';
 
 type PoseTasksPanelProps = {
@@ -130,7 +130,25 @@ function getTaskGroups(tasks: PoseTask[]) {
 }
 
 function getReferenceImageUrls(task: PoseTask) {
-  return task.imageUrls?.length ? task.imageUrls : [task.imageUrl];
+  return (task.imageUrls?.length ? task.imageUrls : [task.imageUrl]).map(resolveReferenceImageUrl);
+}
+
+function getApiOrigin() {
+  return API_URL.replace(/\/+$/, '').replace(/\/api\/v1\/?$/, '');
+}
+
+function resolveReferenceImageUrl(imageUrl: string) {
+  const trimmed = imageUrl.trim();
+  if (/^(https?:|blob:|data:)/i.test(trimmed)) return trimmed;
+
+  const normalized = trimmed.replace(/\\/g, '/');
+  const poseImagePrefix = 'uploads/pose-images/';
+  const prefixIndex = normalized.indexOf(poseImagePrefix);
+  if (prefixIndex >= 0) {
+    return `${getApiOrigin()}/${normalized.slice(prefixIndex)}`;
+  }
+
+  return `${getApiOrigin()}/${poseImagePrefix}${normalized.split('/').pop()}`;
 }
 
 function PoseTaskReferencePreview({
