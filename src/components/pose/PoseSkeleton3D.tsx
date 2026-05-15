@@ -238,7 +238,7 @@ function SkeletonScene({
 
   return (
     <>
-      <gridHelper args={[2, 8, '#1e2030', '#252840']} position={[0, -0.6, 0]} />
+      <gridHelper args={[2.5, 12, '#1e2030', '#252840']} position={[0, 0, 0]} />
       <ambientLight intensity={0.45} />
       <directionalLight position={[2.5, 4, 3]} intensity={1.4} castShadow={false} />
       <directionalLight position={[-2, 1, -2]} intensity={0.5} color="#a5b4fc" />
@@ -246,9 +246,11 @@ function SkeletonScene({
 
       <OrbitControls
         enablePan={false}
-        minDistance={0.9}
-        maxDistance={4}
-        target={[0, 0.05, 0]}
+        minDistance={0.8}
+        maxDistance={4.5}
+        minPolarAngle={0}
+        maxPolarAngle={Math.PI * 0.92}
+        target={[0, 0.75, 0]}
         autoRotate={false}
       />
 
@@ -335,7 +337,7 @@ export function PoseSkeleton3D({ keypoints, height = 260 }: PoseSkeleton3DProps)
       </div>
       <div style={{ height }}>
         <Canvas
-          camera={{ position: [0, 0.3, 2.4], fov: 48 }}
+          camera={{ position: [0, 0.85, 2.4], fov: 52 }}
           style={{ background: '#0d0d14' }}
         >
           <Suspense fallback={null}>
