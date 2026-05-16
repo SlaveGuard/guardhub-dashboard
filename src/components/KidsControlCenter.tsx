@@ -260,13 +260,42 @@ function parseLatestHeartbeat(auditEntries: AnyRecord[]): KidsHeartbeat | null {
     policyVersion: latest.details.policyVersion ?? null,
     batteryLevelPercent: latest.details.batteryLevelPercent ?? null,
     managementMode: latest.details.managementMode ?? null,
-    permissions: latest.details.permissions ?? null, 
+    permissions: normalizePermissions(latest.details.permissions),
     lastSyncEpochMillis: latest.details.lastSyncEpochMillis ?? null, 
     location: normalizeLocation(latest.details.location), 
     installedPackages: Array.isArray(latest.details.installedPackages) ? latest.details.installedPackages : [],
     receivedAt: String(latest.createdAt ?? ''), 
   }; 
 } 
+
+function normalizePermissions(value: unknown): KidsHeartbeat['permissions'] {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as AnyRecord;
+  const permissions = {
+    usageAccess: optionalBoolean(record.usageAccess ?? record.usage_access),
+    deviceAdmin: optionalBoolean(record.deviceAdmin ?? record.device_admin),
+    notifications: optionalBoolean(record.notifications),
+    batteryOptimizationIgnored: optionalBoolean(
+      record.batteryOptimizationIgnored ?? record.battery_optimization_ignored,
+    ),
+    accessibilityFallback: optionalBoolean(record.accessibilityFallback ?? record.accessibility_fallback),
+    location: optionalBoolean(record.location ?? record.locationGranted ?? record.location_granted),
+    backgroundLocation: optionalBoolean(
+      record.backgroundLocation ?? record.backgroundLocationGranted ?? record.background_location,
+    ),
+  };
+
+  return Object.values(permissions).some((permission) => permission !== undefined) ? permissions : null;
+}
+
+function optionalBoolean(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    if (value.toLowerCase() === 'true') return true;
+    if (value.toLowerCase() === 'false') return false;
+  }
+  return undefined;
+}
 
 function normalizeLocation(value: unknown): KidsLocation | null {
   if (!value || typeof value !== 'object') return null;
@@ -803,6 +832,14 @@ export default function KidsControlCenter({
   const usageSummaries = useMemo(() => parseUsageSummaries(auditEntries), [auditEntries]);
   const blockedEvents = useMemo(() => parseBlockedEvents(auditEntries), [auditEntries]);
   const latestHeartbeat = useMemo(() => parseLatestHeartbeat(auditEntries), [auditEntries]);
+  const latestDevicePermissions = useMemo(
+    () => normalizePermissions(
+      device.appVersions?.guardhubKids?.permissions ??
+        device.appVersions?.permissions ??
+        device.latestPermissions,
+    ),
+    [device.appVersions, device.latestPermissions],
+  );
 
   useEffect(() => {
     console.log('[KidsControlCenter] device object:', {
@@ -932,27 +969,32 @@ export default function KidsControlCenter({
   const deviceHealthItems = useMemo<DeviceHealthItem[]>(() => {
     // Primary source: device fields written directly by heartbeat. Fallback to
     // audit heartbeat permissions when those entries are linked to this app.
+    const permissions = latestDevicePermissions ?? latestHeartbeat?.permissions ?? null;
     const adminActive =
       device.adminActive === true ||
-      latestHeartbeat?.permissions?.deviceAdmin === true;
+      permissions?.deviceAdmin === true;
 
     const usageAccess =
-      latestHeartbeat?.permissions?.usageAccess === true;
+      permissions?.usageAccess === true;
 
     const accessibility =
-      latestHeartbeat?.permissions?.accessibilityFallback === true;
+      permissions?.accessibilityFallback === true;
 
     const batteryExempt =
-      latestHeartbeat?.permissions?.batteryOptimizationIgnored === true;
+      permissions?.batteryOptimizationIgnored === true;
+
+    const locationPermission =
+      permissions?.location === true ||
+      permissions?.backgroundLocation === true;
 
     return [
       { label: 'Device Admin', active: adminActive, Icon: ShieldCheck },
       { label: 'Usage Access', active: usageAccess, Icon: Activity },
       { label: 'Accessibility', active: accessibility, Icon: Accessibility },
       { label: 'Battery exempt', active: batteryExempt, Icon: Battery },
-      { label: 'Location', active: Boolean(latestLocation), Icon: MapPin },
+      { label: 'Location', active: locationPermission || Boolean(latestLocation), Icon: MapPin },
     ];
-  }, [device.adminActive, latestHeartbeat, latestLocation]);
+  }, [device.adminActive, latestDevicePermissions, latestHeartbeat, latestLocation]);
   const hasRecentHeartbeat = !!device.lastSeen &&
     (Date.now() - new Date(device.lastSeen).getTime()) < 10 * 60 * 1000;
   const deviceAdminConfirmedInactive =
