@@ -995,6 +995,21 @@ export default function KidsControlCenter({
       { label: 'Location', active: locationPermission || Boolean(latestLocation), Icon: MapPin },
     ];
   }, [device.adminActive, latestDevicePermissions, latestHeartbeat, latestLocation]);
+  useEffect(() => {
+    const permissions = latestDevicePermissions ?? latestHeartbeat?.permissions ?? null;
+    console.log('[GuardHubPermDebug] dashboard permission health inputs', {
+      deviceId: device.id,
+      deviceLastSeen: device.lastSeen,
+      rawDeviceGuardHubKidsPermissions: device.appVersions?.guardhubKids?.permissions ?? null,
+      rawDevicePermissions: device.appVersions?.permissions ?? device.latestPermissions ?? null,
+      normalizedDevicePermissions: latestDevicePermissions,
+      latestHeartbeatReceivedAt: latestHeartbeat?.receivedAt ?? null,
+      latestHeartbeatPermissions: latestHeartbeat?.permissions ?? null,
+      selectedPermissions: permissions,
+      latestLocation,
+      computedHealthItems: deviceHealthItems.map(({ label, active }) => ({ label, active })),
+    });
+  }, [device, latestDevicePermissions, latestHeartbeat, latestLocation, deviceHealthItems]);
   const hasRecentHeartbeat = !!device.lastSeen &&
     (Date.now() - new Date(device.lastSeen).getTime()) < 10 * 60 * 1000;
   const deviceAdminConfirmedInactive =
