@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Accessibility,
@@ -26,6 +26,16 @@ import {
   getAppsByCategory,
   searchApps,
 } from '../data/kidsAppCatalog'; 
+import playStoreIconsRaw from '../data/playStoreIcons.json';
+
+type PlayStoreEntry = {
+  iconUrl: string;
+  title: string;
+  score: number | null;
+  genre: string | null;
+} | null;
+
+const PLAY_STORE_ICONS = playStoreIconsRaw as Record<string, PlayStoreEntry>;
 
 /** Fast O(1) lookup: packageName → catalog metadata */
 const CATALOG_BY_PACKAGE = new Map(
@@ -481,9 +491,19 @@ const TIME_LIMIT_OPTIONS = [
   { label: '4h', value: 240 },
 ];
 
+/** Returns the value from the previous render. */
+function usePrevious<T>(value: T): T | undefined {
+  const ref = useRef<T | undefined>(undefined);
+  useEffect(() => { ref.current = value; });
+  return ref.current;
+}
+
 /** 
- * Renders a square app icon: tries loading from icon.horse, falls back to a 
- * coloured letter-avatar. 
+ * Renders a square app icon using a 4-stage fallback chain:
+ *   1. Play Store icon from playStoreIcons.json  (best quality, build-time)
+ *   2. Explicit iconUrl from the API
+ *   3. icon.horse with catalog iconDomain
+ *   4. Coloured letter avatar                    (always works)
  */ 
 function AppIcon({ 
   app, 
@@ -492,15 +512,47 @@ function AppIcon({
   app: AnyRecord; 
   size?: number; 
 }) { 
-  const [failed, setFailed] = useState(false); 
   const label = String(app.displayName ?? app.name ?? app.packageName ?? 'App');
-  const url =
-    app.iconUrl ??
-    (app.iconDomain
-      ? `https://icon.horse/icon/${app.iconDomain}`
-      : app.packageName
-        ? `https://icon.horse/icon/${app.packageName}`
-        : undefined);
+  const packageName = String(app.packageName ?? '');
+
+  // Build priority-ordered list of URLs to attempt
+  const hasPlayStoreEntry = packageName
+    ? Object.prototype.hasOwnProperty.call(PLAY_STORE_ICONS, packageName)
+    : false;
+  const playStoreEntry = hasPlayStoreEntry ? PLAY_STORE_ICONS[packageName] : null;
+  const iconDomain = app.iconDomain ?? null;
+  const skipNetworkFallbacks = hasPlayStoreEntry && playStoreEntry === null;
+
+  const urlCandidates: string[] = skipNetworkFallbacks
+    ? []
+    : [
+        playStoreEntry?.iconUrl ?? '',
+        app.iconUrl ?? '',
+        iconDomain ? `https://icon.horse/icon/${iconDomain}` : '',
+      ].filter((u) => u.length > 0);
+
+  const [urlIndex, setUrlIndex] = useState(0);
+
+  // Reset when the app changes (different row re-uses the component)
+  const stableKey = packageName;
+  const prevKey = usePrevious(stableKey);
+  useEffect(() => {
+    if (prevKey !== undefined && prevKey !== stableKey) {
+      setUrlIndex(0);
+    }
+  }, [prevKey, stableKey]);
+
+  const currentUrl = urlCandidates[urlIndex] ?? null;
+  const showLetterAvatar = currentUrl === null;
+
+  const handleError = () => {
+    if (urlIndex < urlCandidates.length - 1) {
+      setUrlIndex((i) => i + 1);
+    } else {
+      // All URLs exhausted - force letter avatar by setting index past the end
+      setUrlIndex(urlCandidates.length);
+    }
+  };
  
   return ( 
     <div 
@@ -508,14 +560,14 @@ function AppIcon({
       style={{ width: size, height: size }} 
       data-icon-placeholder
     > 
-      {url && !failed ? ( 
+      {!showLetterAvatar && currentUrl ? ( 
         <img 
-          src={url} 
+          src={currentUrl} 
           alt={label} 
           width={size} 
           height={size} 
           className="h-full w-full rounded-xl object-cover" 
-          onError={() => setFailed(true)} 
+          onError={handleError} 
         /> 
       ) : ( 
         <div

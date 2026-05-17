@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "fetch-icons": "node scripts/fetch-play-icons.mjs",
     "preview": "vite preview"
   },
   "devDependencies": {
@@ -14,6 +15,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.160.0",
     "@vitejs/plugin-react": "^6.0.1",
+    "google-play-scraper": "^9.1.1",
     "tailwindcss": "^4.2.2",
     "typescript": "~6.0.2",
     "vite": "^8.0.4"
