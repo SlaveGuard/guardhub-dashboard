@@ -27,6 +27,11 @@ import {
   searchApps,
 } from '../data/kidsAppCatalog'; 
 
+/** Fast O(1) lookup: packageName → catalog metadata */
+const CATALOG_BY_PACKAGE = new Map(
+  APP_CATALOG.map((entry) => [entry.packageName, entry]),
+);
+
 type AnyRecord = Record<string, any>;
 type TabId = 'overview' | 'screen-time' | 'apps' | 'web-filter' | 'bedtime' | 'reports';
 
@@ -40,6 +45,9 @@ interface InstalledApp {
   packageName: string;
   displayName: string;
   iconUrl?: string;
+  iconDomain?: string;
+  iconColor?: string;
+  iconLetter?: string;
   category?: string;
   isBlocked: boolean;
   timeLimitMinutes?: number;
@@ -430,14 +438,29 @@ function normalizeInstalledApps(
       ? raw
       : String(raw.packageName ?? raw.package ?? raw.appCatalog?.packageName ?? '');
     if (!packageName) return;
+    const catalogEntry = CATALOG_BY_PACKAGE.get(packageName);
+    const existing = byPackage.get(packageName);
+    const rawIconUrl = typeof raw !== 'string' ? (raw.iconUrl ?? raw.appCatalog?.iconUrl) : undefined;
+    const rawIconDomain = typeof raw !== 'string' ? (raw.iconDomain ?? raw.appCatalog?.iconDomain) : undefined;
+    const rawCategory = typeof raw !== 'string' ? (raw.category ?? raw.appCatalog?.category) : undefined;
     const displayName = typeof raw === 'string'
-      ? appDisplayName(packageName)
-      : String(raw.displayName ?? raw.name ?? raw.appLabel ?? raw.appCatalog?.displayName ?? appDisplayName(packageName));
+      ? existing?.displayName ?? appDisplayName(packageName)
+      : String(raw.displayName ?? raw.name ?? raw.appLabel ?? raw.appCatalog?.displayName ?? existing?.displayName ?? appDisplayName(packageName));
+
     byPackage.set(packageName, {
       packageName,
       displayName,
-      iconUrl: typeof raw === 'string' ? undefined : raw.iconUrl ?? raw.appCatalog?.iconUrl,
-      category: typeof raw === 'string' ? undefined : raw.category ?? raw.appCatalog?.category,
+      iconUrl: rawIconUrl ?? existing?.iconUrl ?? undefined,
+      iconDomain: rawIconDomain
+        ?? existing?.iconDomain
+        ?? catalogEntry?.iconDomain
+        ?? undefined,
+      iconColor: existing?.iconColor ?? catalogEntry?.iconColor ?? undefined,
+      iconLetter: existing?.iconLetter ?? catalogEntry?.iconLetter ?? undefined,
+      category: rawCategory
+        ?? existing?.category
+        ?? catalogEntry?.category
+        ?? undefined,
       isBlocked: blockedPackages.includes(packageName),
       timeLimitMinutes: limits[packageName],
     });
@@ -471,7 +494,13 @@ function AppIcon({
 }) { 
   const [failed, setFailed] = useState(false); 
   const label = String(app.displayName ?? app.name ?? app.packageName ?? 'App');
-  const url = app.iconUrl ?? (app.iconDomain ? `https://icon.horse/icon/${app.iconDomain}` : undefined); 
+  const url =
+    app.iconUrl ??
+    (app.iconDomain
+      ? `https://icon.horse/icon/${app.iconDomain}`
+      : app.packageName
+        ? `https://icon.horse/icon/${app.packageName}`
+        : undefined);
  
   return ( 
     <div 
@@ -489,7 +518,10 @@ function AppIcon({
           onError={() => setFailed(true)} 
         /> 
       ) : ( 
-        <div className="flex h-full w-full items-center justify-center rounded-xl bg-slate-700">
+        <div
+          className="flex h-full w-full items-center justify-center rounded-xl"
+          style={{ backgroundColor: app.iconColor ?? '#334155' }}
+        >
           <span className="font-bold text-white" style={{ fontSize: size * 0.42 }}> 
             {String(app.iconLetter ?? label.slice(0, 1)).toUpperCase()} 
           </span> 
