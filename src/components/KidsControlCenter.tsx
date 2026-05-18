@@ -14,6 +14,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Smartphone,
+  Star,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -60,6 +61,7 @@ interface InstalledApp {
   iconLetter?: string;
   category?: string;
   isBlocked: boolean;
+  isAlwaysAllowed: boolean;
   timeLimitMinutes?: number;
 }
 
@@ -439,6 +441,7 @@ function normalizeInstalledApps(
   apiItems: AnyRecord[] | undefined,
   heartbeatItems: KidsHeartbeat['installedPackages'] | undefined,
   blockedPackages: string[],
+  alwaysAllowedPackages: string[],
   limits: Record<string, number>,
 ): InstalledApp[] {
   const byPackage = new Map<string, InstalledApp>();
@@ -472,6 +475,7 @@ function normalizeInstalledApps(
         ?? catalogEntry?.category
         ?? undefined,
       isBlocked: blockedPackages.includes(packageName),
+      isAlwaysAllowed: alwaysAllowedPackages.includes(packageName),
       timeLimitMinutes: limits[packageName],
     });
   };
@@ -583,23 +587,27 @@ function AppIcon({
   ); 
 } 
 
-function AppRow({
-  app,
-  isBlocked,
-  isPending,
-  onToggle,
-}: { 
-  app: AnyRecord; 
-  isBlocked: boolean; 
-  isPending: boolean; 
-  onToggle: (blocked: boolean) => void; 
-}) { 
+function AppRow({ 
+  app, 
+  isBlocked, 
+  isAlwaysAllowed,
+  isPending, 
+  onToggle, 
+  onAlwaysAllowedToggle,
+}: {  
+  app: AnyRecord;  
+  isBlocked: boolean;  
+  isAlwaysAllowed?: boolean;
+  isPending: boolean;  
+  onToggle: (blocked: boolean) => void;  
+  onAlwaysAllowedToggle?: (allowed: boolean) => void;
+}) {  
   const packageName = String(app.packageName ?? '');
   const displayName = String(app.displayName ?? app.name ?? packageName);
   const category = app.category ? String(app.category) : undefined;
   const timeLimitMinutes = Number(app.timeLimitMinutes ?? 0);
   return ( 
-    <div className="flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2.5">
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2.5">
       <AppIcon app={app} size={36} /> 
       <div className="min-w-0 flex-1"> 
         <div className="text-sm font-medium text-slate-100">{displayName}</div> 
@@ -615,27 +623,48 @@ function AppRow({
       }`}> 
         {minutesLabel(timeLimitMinutes)} 
       </span>
-      {isBlocked ? (
-        <span className="shrink-0 rounded-full bg-rose-400/10 px-2.5 py-1 text-xs font-semibold text-rose-400">
-          Blocked
+      {isAlwaysAllowed ? (
+        <span className="shrink-0 rounded-full bg-amber-400/10 px-2.5 py-1 text-xs font-semibold text-amber-300">
+          Essential
         </span>
+      ) : isBlocked ? (
+        <span className="shrink-0 rounded-full bg-rose-400/10 px-2.5 py-1 text-xs font-semibold text-rose-400"> 
+          Blocked 
+        </span> 
       ) : (
         <span className="shrink-0 rounded-full bg-accent-teal/10 px-2.5 py-1 text-xs font-semibold text-accent-teal">
           Allowed
         </span>
-      )}
-      <button
-        type="button"
-        disabled={isPending}
-        onClick={() => onToggle(!isBlocked)}
-        className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40 ${
-          isBlocked
-            ? 'border border-accent-teal/20 text-accent-teal hover:bg-accent-teal/10'
-            : 'border border-rose-400/20 text-rose-400 hover:bg-rose-400/10'
-        }`}
-      >
-        {isBlocked ? 'Allow' : 'Block'}
-      </button>
+      )} 
+      {onAlwaysAllowedToggle ? (
+        <button
+          type="button"
+          disabled={isPending}
+          onClick={() => onAlwaysAllowedToggle(!isAlwaysAllowed)}
+          className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:opacity-40 ${
+            isAlwaysAllowed
+              ? 'border-amber-300/30 bg-amber-400/10 text-amber-300 hover:bg-amber-400/15'
+              : 'border-white/10 text-slate-500 hover:border-amber-300/30 hover:text-amber-300'
+          }`}
+          title={isAlwaysAllowed ? 'Remove from always allowed' : 'Always allow'}
+        >
+          <Star className="h-4 w-4" />
+        </button>
+      ) : null}
+      <button 
+        type="button" 
+        disabled={isPending || isAlwaysAllowed}
+        onClick={() => onToggle(!isBlocked)} 
+        className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40 ${ 
+          isAlwaysAllowed
+            ? 'border border-white/10 text-slate-500'
+            : isBlocked
+            ? 'border border-accent-teal/20 text-accent-teal hover:bg-accent-teal/10' 
+            : 'border border-rose-400/20 text-rose-400 hover:bg-rose-400/10' 
+        }`} 
+      > 
+        {isAlwaysAllowed ? 'Allowed' : isBlocked ? 'Allow' : 'Block'}
+      </button> 
     </div>
   );
 }
@@ -689,9 +718,10 @@ export default function KidsControlCenter({
   const [bedtimeStart, setBedtimeStart] = useState({ hour: 21, minute: 0 });
   const [bedtimeWake, setBedtimeWake] = useState({ hour: 7, minute: 0 }); 
   const [blockedCategories, setBlockedCategories] = useState<Set<string>>(new Set()); 
-  const [showUninstallConfirm, setShowUninstallConfirm] = useState(false);
-  const [newPackage, setNewPackage] = useState('');
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
+  const [showUninstallConfirm, setShowUninstallConfirm] = useState(false); 
+  const [newPackage, setNewPackage] = useState(''); 
+  const [newEssentialPackage, setNewEssentialPackage] = useState('');
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>( 
     new Set(['Social Media', 'Games & Gaming']),
   );
   const [showCustomAppForm, setShowCustomAppForm] = useState(false);
@@ -996,11 +1026,15 @@ export default function KidsControlCenter({
         .reduce((sum, summary) => sum + summary.usageSeconds, 0) / 60,
     );
   }, [usageSummaries]);
-  const blockedPackages = useMemo<string[]>(() => { 
-    const blocklist = entryValue(policy, 'kids.blocklist'); 
-    return Array.isArray(blocklist?.packages) ? blocklist.packages : []; 
-  }, [policy]); 
-  const perAppLimitMap = useMemo<Record<string, number>>(() => {
+  const blockedPackages = useMemo<string[]>(() => {  
+    const blocklist = entryValue(policy, 'kids.blocklist');  
+    return Array.isArray(blocklist?.packages) ? blocklist.packages : [];  
+  }, [policy]);  
+  const alwaysAllowedPackages = useMemo<string[]>(() => {
+    const alwaysAllowed = entryValue(policy, 'kids.always_allowed_apps');
+    return Array.isArray(alwaysAllowed?.packages) ? alwaysAllowed.packages : [];
+  }, [policy]);
+  const perAppLimitMap = useMemo<Record<string, number>>(() => { 
     const raw = entryValue(policy, 'screen_time.per_app_limits') ?? entryValue(policy, 'kids.screen_time.per_app');
     if (!raw || typeof raw !== 'object') return {};
     return Object.fromEntries(
@@ -1009,22 +1043,43 @@ export default function KidsControlCenter({
   }, [policy]);
   const installedApps = useMemo(
     () => normalizeInstalledApps(
-      deviceApps,
-      latestHeartbeat?.installedPackages,
-      blockedPackages,
-      perAppLimitMap,
-    ),
-    [deviceApps, latestHeartbeat, blockedPackages, perAppLimitMap],
-  );
-  const filteredInstalledApps = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return installedApps;
-    return installedApps.filter((app) =>
-      app.displayName.toLowerCase().includes(q) ||
-      app.packageName.toLowerCase().includes(q),
-    );
-  }, [installedApps, search]);
-  const usageMinutes = useMemo(() => {
+      deviceApps, 
+      latestHeartbeat?.installedPackages, 
+      blockedPackages, 
+      alwaysAllowedPackages,
+      perAppLimitMap, 
+    ), 
+    [deviceApps, latestHeartbeat, blockedPackages, alwaysAllowedPackages, perAppLimitMap],
+  ); 
+  const filteredInstalledApps = useMemo(() => { 
+    const q = search.trim().toLowerCase(); 
+    if (!q) return installedApps; 
+    return installedApps.filter((app) => 
+      app.displayName.toLowerCase().includes(q) || 
+      app.packageName.toLowerCase().includes(q), 
+    ); 
+  }, [installedApps, search]); 
+  const alwaysAllowedAppRows = useMemo<InstalledApp[]>(() => (
+    alwaysAllowedPackages
+      .map((packageName) => {
+        const installed = installedApps.find((app) => app.packageName === packageName);
+        if (installed) return installed;
+        const catalogEntry = CATALOG_BY_PACKAGE.get(packageName);
+        return {
+          packageName,
+          displayName: catalogEntry?.name ?? appDisplayName(packageName),
+          iconDomain: catalogEntry?.iconDomain,
+          iconColor: catalogEntry?.iconColor,
+          iconLetter: catalogEntry?.iconLetter,
+          category: catalogEntry?.category,
+          isBlocked: blockedPackages.includes(packageName),
+          isAlwaysAllowed: true,
+          timeLimitMinutes: perAppLimitMap[packageName],
+        };
+      })
+      .sort((a, b) => a.displayName.localeCompare(b.displayName))
+  ), [alwaysAllowedPackages, blockedPackages, installedApps, perAppLimitMap]);
+  const usageMinutes = useMemo(() => { 
     const today = todayDateKey();
     const todaySeconds = usageSummaries
       .filter((summary) => summary.dateKey === today)
@@ -1100,10 +1155,21 @@ export default function KidsControlCenter({
     (hasRecentHeartbeat && device.adminActive === false) ||
     latestHeartbeat?.permissions?.deviceAdmin === false;
 
-  const patchBlocklist = (packages: string[]) => {
+  const patchBlocklist = (packages: string[]) => { 
+    patchPolicyMutation.mutate({ 
+      key: 'kids.blocklist', 
+      value: { packages }, 
+      strength: 'hard', 
+    }); 
+  }; 
+
+  const patchAlwaysAllowedApps = (packages: string[]) => {
+    const normalizedPackages = Array.from(
+      new Set(packages.map((pkg) => pkg.trim()).filter(Boolean)),
+    );
     patchPolicyMutation.mutate({
-      key: 'kids.blocklist',
-      value: { packages },
+      key: 'kids.always_allowed_apps',
+      value: { packages: normalizedPackages },
       strength: 'hard',
     });
   };
@@ -1806,11 +1872,92 @@ export default function KidsControlCenter({
         </div>
       ) : null}
 
-      {activeTab === 'apps' ? (
-        <div className="space-y-4">
+      {activeTab === 'apps' ? ( 
+        <div className="space-y-4"> 
+          <section className="glass-panel p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+                  <Star className="h-4 w-4 text-amber-300" />
+                  Always allowed apps
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  Essential apps stay available during locks, schedules, app blocks, and time limits.
+                </p>
+              </div>
+              <span className="rounded-full bg-amber-400/10 px-2.5 py-1 text-xs font-semibold text-amber-300">
+                {alwaysAllowedPackages.length} selected
+              </span>
+            </div>
 
-          {/* Search */}
-          <div className="relative">
+            <div className="mt-4 space-y-2">
+              {alwaysAllowedAppRows.length ? alwaysAllowedAppRows.map((app) => (
+                <div
+                  key={app.packageName}
+                  className="flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2.5"
+                >
+                  <AppIcon app={app} size={36} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-slate-100">{app.displayName}</div>
+                    <div className="truncate font-mono text-[10px] text-slate-500">{app.packageName}</div>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-amber-400/10 px-2.5 py-1 text-xs font-semibold text-amber-300">
+                    Essential
+                  </span>
+                  <button
+                    type="button"
+                    disabled={patchPolicyMutation.isPending}
+                    onClick={() => patchAlwaysAllowedApps(alwaysAllowedPackages.filter((pkg) => pkg !== app.packageName))}
+                    className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-rose-400/10 hover:text-rose-400 disabled:opacity-40"
+                  >
+                    Remove
+                  </button>
+                </div>
+              )) : (
+                <EmptyState>No essential apps selected.</EmptyState>
+              )}
+            </div>
+
+            <div className="mt-4 flex gap-2">
+              <input
+                value={newEssentialPackage}
+                onChange={(event) => setNewEssentialPackage(event.target.value.trim())}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === 'Enter' &&
+                    newEssentialPackage &&
+                    !alwaysAllowedPackages.includes(newEssentialPackage)
+                  ) {
+                    patchAlwaysAllowedApps([...alwaysAllowedPackages, newEssentialPackage]);
+                    setNewEssentialPackage('');
+                  }
+                }}
+                placeholder="com.example.essential"
+                className="min-w-0 flex-1 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2 font-mono text-sm text-slate-100 outline-none focus:border-brand-500"
+              />
+              <button
+                type="button"
+                disabled={
+                  !newEssentialPackage ||
+                  alwaysAllowedPackages.includes(newEssentialPackage) ||
+                  patchPolicyMutation.isPending
+                }
+                onClick={() => {
+                  if (newEssentialPackage && !alwaysAllowedPackages.includes(newEssentialPackage)) {
+                    patchAlwaysAllowedApps([...alwaysAllowedPackages, newEssentialPackage]);
+                    setNewEssentialPackage('');
+                  }
+                }}
+                className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-500 disabled:opacity-40"
+              >
+                <Star className="h-4 w-4" />
+                Allow
+              </button>
+            </div>
+          </section>
+ 
+          {/* Search */} 
+          <div className="relative"> 
             <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-500" />
             <input
               value={search}
@@ -1833,14 +1980,22 @@ export default function KidsControlCenter({
             {filteredInstalledApps.length > 0 ? (
               <div className="space-y-2">
                 {filteredInstalledApps.map((app) => (
-                  <AppRow
-                    key={app.packageName}
-                    app={app}
-                    isBlocked={blockedPackages.includes(app.packageName)}
-                    isPending={patchPolicyMutation.isPending}
-                    onToggle={(shouldBlock) => {
-                      if (shouldBlock) {
-                        patchBlocklist([...blockedPackages, app.packageName]);
+                  <AppRow 
+                    key={app.packageName} 
+                    app={app} 
+                    isBlocked={blockedPackages.includes(app.packageName)} 
+                    isAlwaysAllowed={alwaysAllowedPackages.includes(app.packageName)}
+                    isPending={patchPolicyMutation.isPending} 
+                    onAlwaysAllowedToggle={(shouldAllow) => {
+                      if (shouldAllow) {
+                        patchAlwaysAllowedApps([...alwaysAllowedPackages, app.packageName]);
+                      } else {
+                        patchAlwaysAllowedApps(alwaysAllowedPackages.filter((pkg) => pkg !== app.packageName));
+                      }
+                    }}
+                    onToggle={(shouldBlock) => { 
+                      if (shouldBlock) { 
+                        patchBlocklist([...blockedPackages, app.packageName]); 
                       } else {
                         patchBlocklist(blockedPackages.filter((p) => p !== app.packageName));
                       }
