@@ -370,7 +370,7 @@ function buildWeeklyUsageBars(
   for (let i = 6; i >= 0; i -= 1) {
     const date = new Date(now);
     date.setDate(date.getDate() - i);
-    const dateKey = date.toISOString().slice(0, 10);
+    const dateKey = localDateKey(date);
     const minutes = Math.round((byDate.get(dateKey) ?? 0) / 60);
     result.push({
       day: dayLabels[date.getDay()],
@@ -406,7 +406,14 @@ function buildTopAppsByUsage(
 }
 
 function todayDateKey(): string {
-  return new Date().toISOString().slice(0, 10);
+  return localDateKey(new Date());
+}
+
+function localDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function blockReasonLabel(reason: string): string { 
@@ -939,13 +946,25 @@ export default function KidsControlCenter({
       limitMinutes: Number(limitMinutes ?? 0),
     }));
   }, [policy]);
-  const remoteLockValue = entryValue(policy, 'kids.remote_lock');
-  const remoteLockActive = Boolean(
-    remoteLockValue?.enabled ?? remoteLockValue?.locked ?? device.lockdownActive,
+  const remoteLockValue = entryValue(policy, 'kids.remote_lock'); 
+  const remoteLockActive = Boolean( 
+    remoteLockValue?.enabled ?? remoteLockValue?.locked ?? device.lockdownActive, 
+  ); 
+  const kidsActivityEntries = useMemo<AnyRecord[]>(
+    () => (Array.isArray(activity) ? activity.filter((entry) => entry?.type === 'kids' || String(entry?.action ?? '').startsWith('kids.')) : []),
+    [activity],
   );
-  const usageSummaries = useMemo(() => parseUsageSummaries(auditEntries), [auditEntries]);
-  const blockedEvents = useMemo(() => parseBlockedEvents(auditEntries), [auditEntries]);
-  const latestHeartbeat = useMemo(() => parseLatestHeartbeat(auditEntries), [auditEntries]);
+  const usageEntries = useMemo(
+    () => (kidsActivityEntries.length ? kidsActivityEntries : auditEntries),
+    [auditEntries, kidsActivityEntries],
+  );
+  const heartbeatEntries = useMemo(
+    () => (kidsActivityEntries.length ? kidsActivityEntries : auditEntries),
+    [auditEntries, kidsActivityEntries],
+  );
+  const usageSummaries = useMemo(() => parseUsageSummaries(usageEntries), [usageEntries]);
+  const blockedEvents = useMemo(() => parseBlockedEvents(auditEntries), [auditEntries]); 
+  const latestHeartbeat = useMemo(() => parseLatestHeartbeat(heartbeatEntries), [heartbeatEntries]);
   const latestDevicePermissions = useMemo(
     () => normalizePermissions(
       device.appVersions?.guardhubKids?.permissions ??
@@ -966,11 +985,13 @@ export default function KidsControlCenter({
     });
     console.log('[KidsControlCenter] latestHeartbeat:', latestHeartbeat);
     console.log('[KidsControlCenter] auditEntries count:', auditEntries.length);
-    console.log(
-      '[KidsControlCenter] kids.heartbeat count:',
-      auditEntries.filter((entry) => entry.action === 'kids.heartbeat').length,
-    );
-  }, [device, latestHeartbeat, auditEntries, remoteLockActive]);
+    console.log('[KidsControlCenter] kidsActivityEntries count:', kidsActivityEntries.length);
+    console.log('[KidsControlCenter] usageSummaries count:', usageSummaries.length);
+    console.log( 
+      '[KidsControlCenter] kids.heartbeat count:', 
+      heartbeatEntries.filter((entry) => entry.action === 'kids.heartbeat').length,
+    ); 
+  }, [device, latestHeartbeat, auditEntries, kidsActivityEntries, usageSummaries, heartbeatEntries, remoteLockActive]);
 
   const latestLocation = normalizeLocation(device.latestLocation) ?? latestHeartbeat?.location ?? null;
   const weeklyBars = useMemo(
@@ -981,13 +1002,13 @@ export default function KidsControlCenter({
     () => buildTopAppsByUsage(usageSummaries),
     [usageSummaries],
   );
-  const todayBlocked = useMemo(() => {
-    const today = todayDateKey();
-    return blockedEvents.filter((event) => {
-      const date = new Date(event.occurredAtEpochMillis);
-      return date.toISOString().slice(0, 10) === today;
-    });
-  }, [blockedEvents]);
+  const todayBlocked = useMemo(() => { 
+    const today = todayDateKey(); 
+    return blockedEvents.filter((event) => { 
+      const date = new Date(event.occurredAtEpochMillis); 
+      return localDateKey(date) === today;
+    }); 
+  }, [blockedEvents]); 
   const topAppsToday = useMemo(() => {
     const today = todayDateKey();
     const todaySummaries = usageSummaries.filter((summary) => summary.dateKey === today);
@@ -1017,9 +1038,9 @@ export default function KidsControlCenter({
     return blockedEvents.filter((event) => event.occurredAtEpochMillis >= sevenDaysAgo).length;
   }, [blockedEvents]);
   const weeklyTotalUsageMinutes = useMemo(() => {
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const cutoff = sevenDaysAgo.toISOString().slice(0, 10);
+    const sevenDaysAgo = new Date(); 
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7); 
+    const cutoff = localDateKey(sevenDaysAgo);
     return Math.round(
       usageSummaries
         .filter((summary) => summary.dateKey >= cutoff)
@@ -1098,11 +1119,11 @@ export default function KidsControlCenter({
       screenTimeToday: usageLabel(usageMinutes),
       appsOpened: uniquePackagesToday.size, 
       appsBlocked: todayBlocked.length, 
-      sitesBlocked: 0,
-      alertsToday: alerts.filter((alert: AnyRecord) => {
-        const date = new Date(alert.sentAt || alert.createdAt || 0);
-        return date.toISOString().slice(0, 10) === today;
-      }).length,
+      sitesBlocked: 0, 
+      alertsToday: alerts.filter((alert: AnyRecord) => { 
+        const date = new Date(alert.sentAt || alert.createdAt || 0); 
+        return localDateKey(date) === today;
+      }).length, 
     };
   }, [usageSummaries, usageMinutes, todayBlocked, alerts]); 
   const deviceHealthItems = useMemo<DeviceHealthItem[]>(() => {
